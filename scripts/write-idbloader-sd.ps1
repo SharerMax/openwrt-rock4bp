@@ -45,7 +45,8 @@
 param(
     [int]    $DiskNumber = -1,
     [string] $ImagePath,
-    [long]    $Offset = 32768
+    [long]    $Offset = 32768,
+    [switch] $Preview
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,7 +89,12 @@ if ($DiskNumber -lt 0) {
     exit 0
 }
 
-Assert-Admin
+# Elevation is only needed for the write itself, so -Preview can run without
+# it. That matters: without a way to run this path read-only, the part of the
+# script that touches a real disk cannot be exercised until it is too late.
+if (-not $Preview) {
+    Assert-Admin
+}
 
 # --- locate the image ---------------------------------------------------
 
@@ -114,15 +120,22 @@ Write-Host "  image   : $ImagePath ($len bytes, sha256 $((Get-FileHash -LiteralP
 Write-Host "  target  : $target"
 Write-Host ("  size    : {0} GB" -f [math]::Round($disk.Size / 1GB, 1))
 Write-Host "  name    : $($disk.FriendlyName)"
-Write-Host "  offset  : $Offset (0x{0:X})" -f $Offset
-Write-Host "  sector  : $Offset / 512 = $($Offset / 512)   (LBA 0x40)"
-Write-Host "  ends at : byte $($Offset + $len), well inside the device"
+$lba = [long][math]::Floor($Offset / 512)
+Write-Host ("  offset  : {0} (0x{1:X})" -f $Offset, $Offset)
+Write-Host ("  sector  : {0} / 512 = {1}   (LBA 0x{2:X})" -f $Offset, $lba, $lba)
+Write-Host ("  ends at : byte {0}   (sector {1})" -f ($Offset + $len), ($lba + [long]($len / 512)))
 Write-Host ''
 
 # A system or boot disk means the disk number was picked wrong.
 if ($disk.IsSystem -or $disk.IsBoot) {
     Write-Host '  REFUSING: Windows reports this as a system or boot disk.' -ForegroundColor Red
     Write-Host '  If you believe that is wrong, double-check the disk number.' -ForegroundColor DarkGray
+    exit 1
+}
+
+if ($Offset % 512 -ne 0) {
+    Write-Host "  REFUSING: the offset is not a whole number of 512-byte sectors." -ForegroundColor Red
+    Write-Host "            A raw device write has no notion of a partial sector." -ForegroundColor DarkGray
     exit 1
 }
 
@@ -138,6 +151,12 @@ if (-not $disk.IsRemovable) {
     Write-Host '  NOTE: Windows does not think this disk is removable.' -ForegroundColor Yellow
     Write-Host '        That is expected for some USB card readers.' -ForegroundColor DarkGray
     Write-Host ''
+}
+
+if ($Preview) {
+    Write-Host '  PREVIEW: every check above ran, nothing was written.' -ForegroundColor Cyan
+    Write-Host '           Re-run without -Preview to actually write.' -ForegroundColor DarkGray
+    exit 0
 }
 
 $answer = Read-Host ("  Write $len bytes to $target at offset $Offset ? Type YES to continue")
