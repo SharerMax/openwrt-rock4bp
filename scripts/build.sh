@@ -10,6 +10,12 @@
 # essential, and both times the only way to notice was to look at the output
 # rather than at the exit status.
 cd /home/max/Code/openwrt || exit 99
+
+# Helper scripts live beside this one, not in the OpenWrt tree the checks run
+# against. Resolving them from $0 keeps the two apart -- a relative path here
+# fails only when the check runs, and prints a bare "No such file" that looks
+# like a missing helper rather than a wrong directory.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 umask 022
 LOG=/tmp/build-full.log
 : > "$LOG"
@@ -154,6 +160,42 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
 
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
+
+  # The image carries its own bootloader, and it must be the fixed one.
+  #
+  # OpenWrt's rockchip image recipe already embeds it:
+  #   target/linux/rockchip/image/Makefile
+  #     gen_image_generic.sh ... 32768      # 32 MiB of padding
+  #     dd if=$(UBOOT_DEVICE_NAME)-u-boot-rockchip.bin of=$@ seek=64 conv=notrunc
+  # so the rkimage container sits at byte 0x8000 and the U-Boot ITB at sector
+  # 0x4000. This was documented as NOT happening -- both README.md and
+  # FLASHING.md said the image contains no bootloader -- which is why it was
+  # worth checking rather than assuming either way. It does happen, so the
+  # image is self-bootable and the SPI is not load-bearing.
+  #
+  # Which means a stale image silently ships the old, broken bootloader: the
+  # build that produced it succeeded, and the failure only appears when that
+  # image boots. So check the image, not just the build tree.
+  IMG=bin/targets/rockchip/armv8/openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
+  STAGED_UBOOT=staging_dir/target-aarch64_generic_musl/image/rock-4b-plus-rk3399-u-boot-rockchip.bin
+
+  # The container at byte 0x8000 must be the one just staged. Comparing them
+  # catches a stale image directly, and needs no parsing: the recipe dd's this
+  # exact file to that exact offset.
+  check "image is newer than the staged bootloader it embeds" \
+    "[ -f '$IMG' ] && [ '$IMG' -nt '$STAGED_UBOOT' ]"
+
+  # ...and the staged bootloader must actually contain the DRAM parameters.
+  # The device tree is a big-endian FDT, so the property is a big-endian u32
+  # array. The needle is taken from the compiled u-boot.dtb rather than typed
+  # from memory, and validated against that dtb before being used -- an
+  # unvalidated needle is worse than none, because a coincidental match reads
+  # as proof.
+  check "staged bootloader contains the RK3399 DRAM parameters" \
+    "python3 '$SCRIPT_DIR/assert-sdram-params-in-image.py' '$STAGED_UBOOT' '$UB/u-boot.dtb' --dtc '$UBDTC'"
+
+  check "the image embeds that bootloader at LBA 0x40" \
+    "python3 '$SCRIPT_DIR/assert-sdram-params-in-image.py' '$IMG' '$UB/u-boot.dtb' --dtc '$UBDTC' --offset 0x8000"
 } >> "$LOG" 2>&1
 
 # Make the log's own freshness visible. A reader who finds an old log must not be

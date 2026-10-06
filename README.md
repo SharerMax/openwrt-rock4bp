@@ -31,7 +31,7 @@ ac700b2f8d  rockchip: do not track the .config backup file
 
 未推送到任何上游 remote。设备树是**继承上游**的 130 行 delta，维护成本极低。
 
-> ### ⚠️ 板上那份 U-Boot 起不来，原因是移植本身的缺陷
+> ### ⚠️ 板子已于 2026-10-06 救回，但那次变砖暴露了移植本身的缺陷
 >
 > SPI 上的 U-Boot 在 TPL 阶段就退出，因为它的板级设备树缺 `rockchip,sdram-params`，
 > 无法初始化 DRAM：
@@ -43,12 +43,18 @@ ac700b2f8d  rockchip: do not track the .config backup file
 >
 > **构建过程完全静默** —— `idbloader.img` 正常产出、大小也正常。这个缺陷只能靠
 > "把这份引导程序刷进 SPI" 才暴露，而那时已经无法写入替换（RK3399 的启动顺序是
-> SPI → eMMC → SD，SPI 在最前）。详见 `docs/BRICK-U-BOOT-DDR.md`，
-> 恢复步骤见 `FLASHING.md` 第 10 节。
+> SPI → eMMC → SD，SPI 在最前）。
 >
 > **已修**：补上 `arch/arm/dts/rk3399-rock-4b-plus-u-boot.dtsi`，重建后
-> `rockchip,sdram-params` 与 `binman` 节点都在，`build.sh` 加了 4 条断言盯住。
-> **但修复后的引导程序尚未在真机上验证过。**
+> `rockchip,sdram-params` 与 `binman` 节点都在，`build.sh` 加了 7 条断言盯住，
+> 其中 3 条直接打在**镜像**上。
+>
+> **已用 Maskrom 验证恢复路径可用**：官方 `rk3399_loader` + Armbian 引导程序成功
+> 救回，`FLASHING.md` 第 7 节与第 10 节的流程均已在真机上走通。
+>
+> **修复后的 U-Boot 仍未在真机上执行过。** 顺带查明：**镜像本来就自带引导程序**
+> （LBA 0x40 + LBA 0x4000），所以 SPI 不是必需的 —— 这条以前文档写反了。
+> 排查记录见 `docs/BRICK-U-BOOT-DDR.md`。
 
 本移植的文档、overlay 源文件和脚本在**另一个仓库**（本机 `rockpi4bp`）里，两个仓库
 都没有 remote。`scripts/sync-overlay.sh` 负责比对两边的 `overlay/` 与 OpenWrt 树 ——
@@ -185,11 +191,12 @@ overlay/                                           按 OpenWrt 源码树路径�
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         构建脚本（manifest + 构建后 12 项校验）
+  build.sh                                         构建脚本（manifest + 构建后 15 项校验）
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树（双向需显式指定）
   check-patch-sources.sh                           把三个补丁源和它们生成的补丁逐一比对
   extract-patch-file.sh                            从多文件补丁里取出单个文件的新增内容
+  assert-sdram-params-in-image.py                  断言镜像/引导程序里带着 RK3399 DRAM 参数
   deploy.sh                                        把整盘镜像写进 U 盘 / SD / eMMC
   write-idbloader-sd.ps1                           Windows：把 idbloader 写到卡的 LBA 0x40
   wifi-test.sh                                     AP6256 上电测试（每组合一次冷启动）
@@ -416,7 +423,7 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 12 项校验     ← 不是装饰
+4. 构建后 15 项校验     ← 不是装饰
 ```
 
 （"12 项"是 12 条 `check` 语句，其中一条循环跑 4 次，所以日志里打印 15 行。）
@@ -437,7 +444,7 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会先剥掉残留行并断言它确实
 不存在。
 
-### 构建后校验（12 条 check，日志打印 15 行）
+### 构建后校验（15 条 check，日志打印 18 行）
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -459,15 +466,33 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  u-boot dtb carries the RK3399 DRAM parameters (rockchip,sdram-params)
   OK/FAILED  u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)
   OK/FAILED  both idbloader variants built
+  OK/FAILED  image is newer than the staged bootloader it embeds
+  OK/FAILED  staged bootloader contains the RK3399 DRAM parameters
+  OK/FAILED  the image embeds that bootloader at LBA 0x40
 ```
 
-最后 4 项是 2026-10-06 变砖之后加的。**它们的由来就是一个教训：**
-`rockchip,sdram-params` 缺失时构建返回 0，`idbloader.img` 正常产出，前 9 项全过 ——
-因为所有既有校验看的都是**文件在不在、大小对不对、内容是不是这个项目要的**，
-没有一个看"这块板子能不能靠它启动"。
+**最后 7 项是 2026-10-06 变砖之后加的**，分两批，因为两次犯的错不同：
+
+第一批（4 项，针对 `u-boot dtb`）：`rockchip,sdram-params` 缺失时构建返回 0、
+`idbloader.img` 正常产出、原有 9 项全过 —— 因为那些校验问的都是**文件在不在、
+大小对不对、内容是不是这个项目要的**，没有一个问"这块板子能不能靠它启动"。
+
+第二批（3 项，针对**镜像**）：修好构建树之后又发现，**镜像里内嵌的那份引导程序
+可能是旧的**。构建树干净、断言全过，而镜像照样带着 18:40 之前那个坏掉的引导程序 ——
+因为镜像是更早一次构建的产物。镜像才是板子实际执行的东西，所以断言必须打在镜像上。
+
+> 第二批里那条 DRAM 参数检查不能写成 shell 一行：`rockchip,sdram-params` 是
+> **大端 FDT 里的 u32 数组**，needle 必须从编译出的 dtb 里取，并且**先在那个 dtb
+> 自身上验证有效**再用。
+>
+> 教训来自我自己的失误：第一版 needle 是凭记忆敲的，在 `u-boot.dtb` 里 **0 命中**，
+> 却在两个容器里都"命中"—— 那是巧合字节序列。当时若不验证，它会给出任意一个
+> **看起来像证据**的结论。**一个能在垃圾上通过的检查不是检查。**
+> 见 `scripts/assert-sdram-params-in-image.py` 的文档字符串。
 
 **教训**：输出不说谎，但得知道该看什么，而且要**强制**自己去看。
-校验项要按"这个缺陷能不能溜过去"来选，不是按"我改了什么"来选。
+校验项要按"这个缺陷能不能溜过去"来选，不是按"我改了什么"来选；
+而且要打在**最终产物**上，不是只打在中间目录上。
 
 ### 新建 OpenWrt 包时两个必踩的坑
 
@@ -666,9 +691,17 @@ sysupgrade 镜像是 **DOS/MBR**，磁盘标识 `0x5452574f`：
 | p1 | 65536–98303（可启动） | 16 MiB | kernel FIT |
 | p2 | 131072–1179647 | 512 MiB | rootfs |
 
-U-Boot FIT 头 `d00dfeed` 在 **8 MiB** 偏移。镜像里**不含** TPL/SPL/idbloader ——
-引导链在 SPI 上，见 [U-Boot 侧](#u-boot-侧曾判断为简单结果是错的) 和 `FLASHING.md` 第 7 节
-（含"引导程序在 eMMC/SD 上位于 LBA 0x40 而非 LBA 0"这个容易查错的位置）。
+U-Boot FIT 头 `d00dfeed` 在 **8 MiB** 偏移。**镜像自带引导程序**：LBA 0x40 是 rkimage
+容器（TPL+SPL），LBA 0x4000 是 U-Boot 本体的 FIT。这是 OpenWrt rockchip 镜像机制
+本来就有的行为（`target/linux/rockchip/image/Makefile` 留 32 MiB 后
+`dd ... seek=64`），所以镜像**不依赖 SPI**。
+
+⚠️ 本文档早期版本写着「镜像里不含 TPL/SPL/idbloader —— SPI 上已有 U-Boot，够了」。
+**那是错的，且从未验证过** —— 实测字节 0x8000 就是 rkimage 头。和 README 顶部记的
+另一次错误同属一类：**没查就写**，方向还恰好相反。
+
+> 这个发现顺带改变了 SPI 的地位。SPI 在启动顺序最前，所以它一旦有坏内容就挡路
+> （第 10 节那次变砖）；但只要镜像自带引导程序，**SPI 就不是必需的**，只是"排第一"而已。
 
 U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，`mmc0` =
 `fe330000` = eMMC，排在 USB 之前。**写完直接插电就能起，不用改 U-Boot 环境变量。**

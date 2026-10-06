@@ -323,21 +323,28 @@ gpio-keys 节点，`/sys/kernel/debug/gpio | grep -i recovery` 应无输出。
 | p1 | 65536–98303（可启动） | 16 MiB | kernel FIT |
 | p2 | 131072–1179647 | 512 MiB | rootfs |
 
-镜像里**不含** TPL/SPL/idbloader —— SPI 上已有 U-Boot，够了。
+**镜像自带引导程序**：**LBA 0x40 放 rkimage 容器（TPL+SPL），LBA 0x4000（8 MiB）
+放 U-Boot 本体的 FIT**。这是 OpenWrt rockchip 镜像机制本来就有的行为 ——
+`target/linux/rockchip/image/Makefile` 用 `gen_image_generic.sh ... 32768` 留
+32 MiB，然后 `dd if=$(UBOOT_DEVICE_NAME)-u-boot-rockchip.bin of=$@ seek=64`。
+所以镜像**不依赖 SPI 上的任何东西**，可以独立启动。
 U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，
 `mmc0` 就是 eMMC，排在 USB 之前。**写完直接插电就能起，不用改 U-Boot 环境变量。**
 
+> ⚠️ **本文早期版本写着「镜像里不含 TPL/SPL/idbloader —— SPI 上已有 U-Boot，够了」。
+> 那是错的，而且从未验证过。** 实测镜像字节 0x8000 就是 rkimage 头，8 MiB 处有
+> `d00dfeed`。和下面那条是同一类错误：**没查就写**，方向还恰好相反。
+
 > **引导程序在 eMMC/SD 上的位置是 LBA 0x40，不是 LBA 0。** RK3399 的 boot ROM 在
-> `0x40` 扇区（字节 0x8000）找 idbloader，这和 `defconfig` 头部注释里那句
-> *"Boot flow: idbloader.img at LBA 0x40, u-boot.itb at LBA 0x4000"* 是一致的。
+> `0x40` 扇区（字节 0x8000）找 idbloader，这与 `defconfig` 头部那句
+> *"Boot flow: idbloader.img at LBA 0x40, u-boot.itb at LBA 0x4000"* 一致。
 >
-> 判据：Armbian 的镜像从字节 0x8000 开始出现高熵数据，其头 8 字节
-> `3b 8c dc fc be 9f 9d 51` 与本移植产出的 `idbloader.img` 头 8 字节完全相同。
-> 本镜像在 0x40 处是空的，这是有意的 —— 引导链在 SPI 上，见第 10 节。
+> 判据：Armbian 镜像字节 0x8000 处的头 8 字节 `3b 8c dc fc be 9f 9d 51`，
+> 与 rkimage 容器一致。
 >
 > ⚠️ 查这一段时容易踩坑：**只看偏移 0 会误判成「Armbian 镜像里根本没有引导程序」**。
-> 偏移 0 确实只有 MBR 和零，引导程序在 0x8000。这个错误结论一度把恢复方向
-> 带偏成「必须从外部重新获取一份引导程序」。
+> 偏移 0 只有 MBR 和零。这个错误结论一度把恢复方向带偏成
+> 「必须从外部重新获取一份引导程序」。
 
 ⚠️ **从 U 盘启动时不要用 `sysupgrade`**。此时 root 在 `/dev/sda2`，
 sysupgrade 会把 U 盘当成升级目标，等于覆盖你自己的启动盘。走手工 `dd`。
@@ -506,7 +513,8 @@ Maskrom 模式"**，那里是照 Radxa 官方文档 `low-level-dev/maskrom` 抄�
 成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为 `2207:330c`），
 用 `rkdeveloptool` 重新烧写。
 
-**这条路径尚未在真机验证过**，但比整机报废值得好，所以记着。
+✅ **这条路径已在真机上验证过**（2026-10-06）：SPI 上的 U-Boot 起不来时，用官方
+`rk3399_loader` 加 Armbian 的引导程序成功救回。这条路径可用，比整机报废值得好得多。
 
 ### 关于按键数量的一个说明
 
@@ -566,7 +574,8 @@ TPL 拿不到 DRAM 参数就直接退出，连 SPL 都进不去。
 >
 > 修复：`package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch`
 > （源文件 `overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi`）。
-> `scripts/build.sh` 里加了 4 条断言盯住这两件事。
+> `scripts/build.sh` 里加了 7 条断言盯住这两件事，其中 3 条直接打在**镜像**上 ——
+> 因为修好构建树并不会让已有镜像里的引导程序变好，那是另一次构建的产物。
 
 ### 修复后的产物
 
@@ -613,22 +622,34 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（SD 上没有系统、失败），
 再走到 `mmc0`（eMMC 上的 OpenWrt 镜像），应该能直接进系统。
 
-⚠️ **这条路没有在真机验证过。** 它赌的是：boot ROM 在 SPI 的 TPL 失败、并且已经
-`Returning to boot ROM...` 交回控制权之后，会继续往下试 SD。那句 `Returning to boot ROM...`
-说明控制权确实交回去了，所以有希望；但"会不会继续试"是未知的。赌输了走路线 B。
+⚠️ **这条路没有在真机验证过，而且现在只写 `idbloader.img` 是不够的。**
+`idbloader` 只有 TPL+SPL（不含 U-Boot 本体），U-Boot 本体在单独的 `u-boot.itb`
+里、要去 LBA 0x4000。所以往一张空卡上只写 idbloader，板子会停在 SPL 之后。
+
+⚠️ **更实际的做法：直接烧完整的镜像。** 镜像本身就带引导程序（见第 7 节），
+`dd` 整盘下去就行，不用管什么 LBA。如果 SPI 上有可用的 U-Boot，它会照
+`BOOT_TARGETS` 引导这个镜像；如果 SPI 坏了，boot ROM 才会用镜像自带的那份。
 
 > 脚本本身被真卡测出过两个 bug（`-f` 被 `Write-Host` 当成参数、以及未校验扇区对齐），
 > 所以才加了 `-Preview` —— 管理员门禁原本把碰磁盘的那半段挡在后面，导致它无法被执行验证。
-> 详见 `scripts/check-patch-sources.sh` 同批提交的说明。
 
 ### 恢复路线 B：Maskrom 重刷 SPI
 
 见第 7 节"最后一层兜底：Maskrom 模式"。**本板必须先把 SPI Flash 引脚短接到 GND**，
 否则 SPI 里的 U-Boot 会抢先接管，拿不到 maskrom。
 
-要写进 SPI 的是 **`idbloader-spi.img`**（385024 B，和 eMMC/SD 那份大小不同，不要混用）。
-具体写入偏移按 `rkdeveloptool` / RKDevTool 的 SPI 布局，照 Radxa 官方文档来。
-**这一步同样没有在真机验证过。**
+✅ **这条路已在真机验证过**（2026-10-06）：用官方 `rk3399_loader` 加 Armbian 的引导
+程序成功救回。
+
+⚠️ **从 Linux 写 SPI 这条替代路径不可用。** 实测 `/dev/mtd0` 在这块板子、
+这个内核（6.18.54 rockchip64）上，**超过约 32 KiB 的传输不可重复** ——
+三次 `sha256sum` 给出三个不同哈希，两次 `dd` 差 607414 字节；128 个 32 KiB 块里
+91 个稳定，与块大小无关。板子能启动说明 boot ROM 和 U-Boot 读得到它，问题在这个
+内核的 SFC/mtd 读路径。所以：**没法从 Linux 做可信备份，也不能信任从 Linux 的写入**
+（写完还读不回来验证）。要写 SPI 就走 Maskrom。
+
+⚠️ 写入要**两个文件、两个偏移**：`idbloader-spi.img`（TPL+SPL）和 `u-boot.itb`
+（U-Boot 本体）。只写前者只能到 SPL。
 
 ### 进了系统之后，第一件事是把 SPI 修好
 
