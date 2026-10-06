@@ -15,11 +15,11 @@ scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/openwrt-rockchip-
 scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/sha256sums .
 ```
 
-校验（**当前构建 `55a6a7f064`**）：
+校验（**当前构建 `7bd8aebefa`**）：
 
 ```
-16a0cdd1be8490beee3f7531be1a71e7d6536f48bb2c99eaa3f356073170e0a1  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
-9932b3dad4d204c3f238e17399ec2edab07992846a2f1c4d47b7b805e9befc87  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
+e64004a0d5cb353a1046ab3d84e33aee7e344d696c3a42437137fd9ecf564e78  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
+8dbbd2e4c948931ff91ae23bcfa0746c72f9dfbc4d768dd75404d64f75d50fca  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
 ```
 
 **历史校验和**（别搞混，sha256 变了就是不同镜像）：
@@ -28,7 +28,23 @@ scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/sha256sums .
 |---|---|
 | `6386de591b5f…` | WiFi/BT 修复前（`sdio0` disabled，芯片不上电） |
 | `06b61b20dceb…` | 补上 4 个板级 override，WiFi 硬件层打通 |
-| `9932b3dad4d2…` | 删掉猜测的 gpio-keys 节点，包集合修正（当前） |
+| `9932b3dad4d2…` | 删掉猜测的 gpio-keys 节点，包集合修正 |
+| `50092eba850c…` | 固件源与许可纠正前的最后一版 |
+
+> ⚠️ **别用 `gzip -t` 校验 OpenWrt 镜像。** 它会返回 **exit 2** 并报
+> `trailing garbage ignored` —— 这**不是**下载损坏。OpenWrt 的 sysupgrade 镜像在
+> gzip 流**之后**附加了 274 字节的 sysupgrade 元数据尾部，`.gz` 本来就不是一个
+> 干净的 gzip 成员：
+>
+> ```
+> [gzip 成员][8 字节 0][JSON][19 字节二进制][0x0112]
+> {  "metadata_version": "1.1", "compat_version": "1.0",
+>    "supported_devices":["radxa,rock-4b-plus"], "version": { ... } }
+> ```
+>
+> 最后两字节 `0x0112` = 274 就是尾部自身的长度。这在**所有** OpenWrt sysupgrade
+> 镜像上都成立。真正的校验是 `sha256sums` 里的值，`scripts/deploy.sh --verify`
+> 用的就是它。
 
 **第一次建议烧 squashfs**（只读、损坏面小、启动快、便于反复重刷）。
 ext4 版本适合后续要持久化数据或装大量包时再用。
@@ -59,18 +75,24 @@ ext4 版本适合后续要持久化数据或装大量包时再用。
 
 ---
 
-## 3. 烧 microSD 卡
+## 3. 烧 microSD 卡 / U 盘
 
-在**构建机**上做（注意：写卡会清空目标设备）：
+在**构建机**上做（注意：写卡会清空目标设备）。脚本在移植仓库里，不在 OpenWrt 树里：
 
 ```bash
 ssh hyv-ub24
-cd /home/max/Code/openwrt
-lsblk                       # 确认哪块是 SD 卡
-./scripts/deploy.sh /dev/sdX
+/home/max/Code/rockpi4bp/scripts/deploy.sh --list      # 先看有哪些设备
+/home/max/Code/rockpi4bp/scripts/deploy.sh --verify    # 只校验镜像，不写任何设备
+sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX
 ```
 
-脚本会打印目标设备、容量、型号，并要求你**输入设备路径二次确认**，也会拒绝写系统盘。
+`--list` 会打印所有块设备、容量、型号、挂载点。**这一步别跳过** —— 它是防止写错盘的关键。
+
+脚本会：
+- 先用 `sha256sums` 校验镜像（不用 `gzip -t`，原因见 §1）
+- 把镜像展开到临时文件并检查解压后的大小，**在擦盘之前**
+- 拒绝分区（`/dev/sda1`）、eMMC 的 `boot0`/`boot1`/`rpmb`、系统盘、非块设备
+- 要求你**输入设备路径二次确认**
 
 手动等价命令：
 
@@ -79,6 +101,10 @@ gzip -dc openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz \
   | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
+
+> 用管道时注意：gzip 会因为上面说的元数据尾部返回 2。数据其实是完整的
+> （576 MiB 全部解出），但如果你的 shell 设了 `set -o pipefail`，管道会返回非零。
+> `deploy.sh` 是先展开再 `dd`，就是为了绕开这个坑。
 
 ---
 
@@ -93,10 +119,10 @@ sync
 
 ## 5. 首次启动该看什么
 
-### 阶段 A：U-Boot（最关键，也是最大的未知数）
+### 阶段 A：U-Boot
 
-要看到串口有输出，就说明 DRAM 初始化成功了 —— 这是整个移植里最不确定的一环
-（U-Boot 的 defconfig 是从 ROCK 4SE 抄的，只改了两行 DT 引用）。
+串口有输出就说明 SPI 里的 U-Boot 跑起来了、DRAM 初始化成功 —— **这一环已经在 5 次
+上机中反复验证过**，不再是未知数。
 
 期望看到类似：
 
@@ -106,11 +132,22 @@ DRAM:  ...
 ```
 或 RK3399 SPL 的 `SPL_LOAD U-Boot` / `Trying to boot from ...`。
 
+可能看到这条，**无害**：
+
+```
+Loading Environment from SPIFlash... *** Warning - bad CRC, using default environment
+```
+
+SPI 里的环境变量 CRC 是坏的，所以回退到默认环境变量 —— 而默认的 `BOOT_TARGETS`
+已经同时包含 eMMC 和 USB，照样能引导。想启用 SPI 环境变量需先擦写 `u-boot.env`。
+
 **若串口完全没有任何输出**：先按顺序排除
 1. 波特率是不是 1500000
 2. TX/RX 有没有交叉
 3. 是不是插到了 RS-232 电平的转换器上
 4. 以上都对 → 才是 DRAM 初始化失败，这时需要看有无任何偶发字符
+
+看不到任何东西时，**先怀疑波特率和接线，再怀疑固件** —— 别过早下结论说"没跑起来"。
 
 ### 阶段 B：内核启动
 
@@ -200,8 +237,19 @@ cat /sys/kernel/debug/gpio | grep -i reset
 ```
 
 期望 `mmc2: new ultra high speed SDR104 SDIO card` 和 `gpio-10 (|reset) out hi`
-（芯片出复位）。`wlan0` **不会出现** —— 缺 `brcmfmac43456-sdio.bin`，这是已知的、
-划出范围的 non-free 固件缺口，不是移植缺陷。
+（芯片出复位）。`wlan0` **不会出现** —— 但**原因和以前不同了**：
+
+- 早期版本缺 `brcmfmac43456-sdio.bin`，是 non-free 固件缺口。
+- 现在三个固件文件都由 `brcmfmac-firmware-43456-sdio` 装进 `/lib/firmware/brcm/`，
+  驱动**上传固件成功**，芯片却起不来：
+  ```
+  brcmf_sdio_htclk: HT Avail timeout (1000000): clkctl 0x50
+  ```
+  失败发生在**固件上传之后**，所以这不再是"缺文件"，而是芯片/驱动层问题。
+
+排查记录、测试矩阵和已排除项见 `docs/WIFI-INVESTIGATION.md`。这不是移植缺陷 ——
+同样的失败在 Orange Pi 5 Pro、PineBook Pro 上也有报告，而 Radxa 官方的 DTS 和
+驱动映射与我们的完全一致。
 
 **recovery / Maskrom 按键**
 

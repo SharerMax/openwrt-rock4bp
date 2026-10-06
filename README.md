@@ -15,14 +15,21 @@ WiFi 排查有独立文档：[`docs/WIFI-INVESTIGATION.md`](docs/WIFI-INVESTIGAT
 分支 `radxa-rock-4b-plus`，基线 `v25.12.5`：
 
 ```
+7bd8aebefa  firmware: correct the .gitignore note on the untracked WiFi blobs
+afd77222d2  firmware: brcmfmac-firmware-43456-sdio: correct the licence and the source
 a1c0ac7353  firmware: add brcmfmac-firmware-43456-sdio for the AP6256
 55a6a7f064  rockchip: radxa,rock-4b-plus: drop the guessed gpio-keys node
 00d0cc9f48  rockchip: radxa,rock-4b-plus: restore WiFi/BT and fix device packages
 ac700b2f8d  rockchip: do not track the .config backup file
 4bab0883a3  rockchip: add Radxa ROCK (Pi) 4B+ support
+9a2ea1f71e  rockchip: add Radxa ROCK 4B+ (V1.73)
 ```
 
 未推送到任何上游 remote。设备树是**继承上游**的 130 行 delta，维护成本极低。
+
+本移植的文档、overlay 源文件和脚本在**另一个仓库**（本机 `rockpi4bp`）里，两个仓库
+都没有 remote。`scripts/sync-overlay.sh` 负责比对两边的 `overlay/` 与 OpenWrt 树 ——
+它第一次运行就查出了一处已存在的漂移，详见该脚本的说明。
 
 ### 已验证可用
 

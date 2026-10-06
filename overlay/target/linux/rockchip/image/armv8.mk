@@ -313,17 +313,20 @@ define Device/radxa_rock-4b-plus
   SUPPORTED_DEVICES := radxa,rock-4b-plus
   # WiFi/BT: an AP6256 module, which is a Broadcom BCM43456 on SDIO. The
   # module is on sdio0 (reset gpio0_B2, host-wake gpio0_A3); Bluetooth shares
-  # the same die and rides uart0. Both controllers probe and the chip answers
-  # at SDR104, but WiFi does not come up: kmod-brcmfmac selects its firmware
-  # from the SDIO chip ID and asks for brcm/brcmfmac43456-sdio.bin, a non-free
-  # blob that no OpenWrt package ships (it is absent from linux-firmware and
-  # has no Package/brcmfmac-* variant). Dropping the blob into
-  # /lib/firmware/brcm/ is all that is needed -- see README, "WiFi 第三次上机".
+  # the same die and rides uart0.
+  #
+  # brcmfmac-firmware-43456-sdio is needed because kmod-brcmfmac derives the
+  # firmware name from the SDIO chip ID and then asks for
+  # brcm/brcmfmac43456-sdio.{bin,txt,clm_blob}. That blob is proprietary and is
+  # shipped by neither linux-firmware nor any upstream OpenWrt package, so this
+  # port carries it in package/firmware/broadcom-nonfree. Drop that package from
+  # here if you would rather not redistribute it: the driver is already in place
+  # and will use files copied into /lib/firmware/brcm/ on the running system.
   #
   # No kmod-r8169: Ethernet here is an RTL8211F PHY sitting behind the stmmac
   # MAC, confirmed on hardware ("RTL8211F Gigabit Ethernet stmmac-0:00:
   # attached PHY driver"), not a Realtek MAC.
-  DEVICE_PACKAGES := kmod-brcmfmac
+  DEVICE_PACKAGES := kmod-brcmfmac brcmfmac-firmware-43456-sdio
 endef
 TARGET_DEVICES += radxa_rock-4b-plus
 
