@@ -174,6 +174,45 @@ things.
 `post-power-on-delay-ms` on the `sdio-pwrseq` node was considered as a second
 variable and deliberately **not** bundled in, so that a failure would point at one
 cause. It turned out not to be needed.
+
+### Aligning with Armbian, and where that stops
+
+The obvious goal is for the port to ship byte-for-byte what Armbian ships, since
+that configuration is known to work on this board. That is only possible for two
+of the three files.
+
+| File | Armbian ships | This port ships | Can they be aligned? |
+|---|---|---|---|
+| `brcmfmac43456-sdio.txt` | `66c71eb5…` 2099 B, AP6256 | `44e0bb32…` 2053 B, RPi | **yes** — plain text board configuration, no licensing constraint |
+| `brcmfmac43456-sdio.clm_blob` | `2dbd7d22…` 7163 B | identical | already aligned |
+| `brcmfmac43456-sdio.bin` | `3167956a…` 482927 B, 7.45.96.0 | `ddf83f21…` 495898 B, 7.84.17.1 | **no** — see below |
+
+**The firmware blob cannot be aligned, and the reason is licensing, not
+function.** The 7.45.96.0 blob's only known source is `armbian/firmware`, whose
+README states:
+
+> Some firmware files are proprietary and distributed under their respective
+> licenses. Redistribution is limited to non-commercial or usage-only contexts.
+
+Shipping it would undo the correction made earlier in this port, where the blob
+was moved to `RPi-Distro/firmware-nonfree` precisely because that repository carries
+the Synaptics EULA for these exact files. `linux-firmware` does not have the blob at
+all, and Debian's `firmware-nonfree` tarball no longer contains it, so there is no
+redistributable source for 7.45.96.0 that has been found.
+
+7.84.17.1 works, so there is no functional cost to this. It does mean the port
+ships a *newer* firmware build than Armbian, from a source whose licence permits
+redistribution, with the same NVRAM and the same clm_blob.
+
+**The NVRAM is the part worth aligning.** The port was shipping RPi's
+`brcmfmac43456-sdio.txt`, which is a Raspberry Pi's board profile — different PA
+calibration, different `boardflags3`, and Bluetooth coexistence parameters that
+happen to be credited to Cypress, the AP6256's own vendor. That is the wrong
+board's description. Armbian uses the AP6256 NVRAM and works.
+
+Whether the AP6256 NVRAM also works here *with the clock fixed* was the one
+genuinely open question left, and it is a single cold boot: same firmware, only
+the NVRAM changes.
 Beyond those, the honest options are a kernel bisect or a newer kernel base, both
 large changes to an otherwise working port. They should not be attempted while the
 two cheap tests above are untried.
