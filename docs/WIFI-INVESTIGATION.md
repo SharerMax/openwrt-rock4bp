@@ -118,25 +118,87 @@ kernel core, the kernel config, and anything else in the tree.
 * **`brcmfmac: F1 signature read`**, which Armbian logs and we never do, is a
   `pr_debug`. Armbian simply runs with `debug` enabled. Not a behavioural
   difference.
-* **Power sequencing.** Neither device tree gives `mmc@fe310000` a `*-supply`, so
-  the SDIO rail is not regulator-managed on either, and both `mmc-pwrseq-simple`
-  nodes carry the same reset GPIO with no `post-reset-delay-ms`. The supply path
-  is the same on both.
+* **Power sequencing, apart from one property.** Neither device tree gives
+  `mmc@fe310000` a `*-supply`, so the SDIO rail is not regulator-managed on either,
+  and both `mmc-pwrseq-simple` nodes carry the same reset GPIO and pin. What is
+  *not* the same is the clock name — see below.
 
-### What this leaves
+### The one real difference: the WiFi power-sequence clock name
 
-The failure is in the OpenWrt kernel, and it is not yet localised. With the config
-diff and the RPi patches both eliminated, the remaining candidates are:
+`rk3399-rock-pi-4.dtsi` names the `sdio-pwrseq` clock `"lpo"`. The MMC
+power-sequence driver only ever looks up `"ext_clock"`:
 
-1. **The 6.12 vs 6.18 delta in the MMC/SDIO core.** Our brcmfmac is backported to
-   6.18.26 but `drivers/mmc` is 6.12. The SDIO card enumerates at SDR104 on both,
-   so the bus works; what may differ is the sequencing around function-1 register
-   access, which is exactly where the attach times out.
-2. **Reset-to-probe delay.** The chip accepts firmware and then never asserts
-   HT_AVAIL, which is what a chip that is not ready yet looks like. A
-   `post-reset-delay-ms` on the `mmc-pwrseq` node is a one-line DTS change that
-   targets the symptom directly, and neither device tree sets the property today,
-   so it is a genuinely untried value rather than a change to a tuned one.
+```c
+/* drivers/mmc/core/pwrseq_simple.c */
+pwrseq->ext_clk = devm_clk_get(dev, "ext_clock");
+if (IS_ERR(pwrseq->ext_clk) && PTR_ERR(pwrseq->ext_clk) != -ENOENT)
+        return dev_err_probe(dev, PTR_ERR(pwrseq->ext_clk), "external clock not ready\n");
+```
+
+Every later use is guarded with `!IS_ERR()`. So with the inherited name the lookup
+returns `-ENOENT`, that is tolerated, the `ERR_PTR` is left in place, and **the
+clock is silently never enabled**. No error, no warning — the power-on just
+proceeds without it. `mmc-pwrseq-simple.yaml` agrees, declaring `clock-names` as
+`const: ext_clock` with `additionalProperties: false`.
+
+The clock is not decorative. `rk808` index 1 resolves to `clkout2`, the RK808
+PMIC's **32.768 kHz output**, gated by `CLK32KOUT2_EN` in `RK808_CLK32OUT_REG`,
+with real `prepare`/`unprepare` ops. Enabling it is what switches that output on,
+and it happens between powering the card and releasing its reset.
+
+| `sdio-pwrseq` | ours (inherited Radxa) | Armbian |
+|---|---|---|
+| `compatible` | `mmc-pwrseq-simple` | same |
+| `clocks` | rk808 index 1 | same |
+| **`clock-names`** | **`"lpo"`** | **`"ext_clock"`** |
+| `reset-gpios` | gpio0 pin 10, active low | same |
+
+The override added to the board DTS:
+
+```dts
+&sdio_pwrseq {
+	clock-names = "ext_clock";
+};
+```
+
+**This is a conformance fix, not a tuning value, and it is not yet proven.** It is
+a well-evidenced hypothesis and a correct change either way, but nothing has been
+booted with it. The `post-power-on-delay-ms` delay remains untried and was
+deliberately *not* bundled in, so that a failure still points at one cause.
+
+Two things worth recording from writing it:
+
+* The property is **`post-power-on-delay-ms`**, not `post-reset-delay-ms`. The
+  second would have compiled, applied cleanly, and done nothing. The binding is
+  the authority: read it rather than guessing the name.
+* **Comparing phandle *numbers* between two independently compiled DTBs proves
+  nothing.** `clocks = <0x4a 0x01>` versus `<0x47 0x01>` turned out to be the same
+  clock, and `pinctrl-0 = <0xcd>` matching was luck — dtc assigns those values in
+  its own traversal order. References must be resolved to node paths first. An
+  attempt at a whole-tree normalised diff produced 4001 lines of noise for exactly
+  this reason, so the conclusion rests on the targeted per-node comparison, done
+  with resolution.
+
+### Confirmed on the board itself
+
+The Armbian machine is this board, not a sibling: eMMC CID
+`880103534c44333247601d6743a09800`, `SLD32G 28.9 GiB`, and a SPI flash carrying
+Armbian's own U-Boot. On it, `wlan0` exists and is bound to `brcmfmac`:
+
+```
+$ ip -br link show wlan0
+wlan0    DOWN
+$ readlink -f /sys/class/net/wlan0/device/driver
+.../bus/sdio/drivers/brcmfmac
+```
+
+`DOWN` only because no SSID is configured. brcmfmac on this hardware creates the
+interface; the OpenWrt port never reaches that point.
+
+If the clock fix does not resolve it, what remains is the 6.12 vs 6.18 delta in the
+MMC/SDIO core — our brcmfmac is backported to 6.18.26 but `drivers/mmc` is 6.12 —
+and after that a kernel bisect or a newer kernel base, both large changes to an
+otherwise working port.
 
 Beyond those, the honest options are a kernel bisect or a newer kernel base, both
 large changes to an otherwise working port. They should not be attempted while the
@@ -467,6 +529,22 @@ One limit worth stating: the script **cannot tell you whether the boot was cold*
 Nothing inside the running system records whether power was removed, and since
 `dmesg -C` does not work and `rmmod`/`modprobe` does not re-probe, a warm state
 leaves no distinguishing trace. That has to come from the operator.
+
+5. **A build can fail to start and the log will not say so.** A build launched with
+   `setsid nohup` inside an `ssh` command died without an error, and the
+   verification block then read `/tmp/build-full.log` from the *previous* run: nine
+   `OK` lines and `REAL_EXIT_CODE=0`, for a build that never ran. It was read as a
+   successful no-op rebuild. The image sha256 was unchanged and the change was
+   absent from the dtb.
+
+   The size-based assertion did not help: `dtb is the current 63779-byte build`
+   passed, because a stale dtb has exactly the right size. A size cannot detect
+   "nothing was rebuilt" and cannot detect a content change either.
+
+   `scripts/build.sh` now dates its own log, reports the log's age and exit code
+   at the end, asserts the dtb is **newer than the patch** that builds it, and
+   asserts the decompiled dtb **contains** the property the port depends on. A
+   reader finding a log should check its first line before trusting its verdicts.
 
 ## 7. Why this is probably not a defect in the port
 
