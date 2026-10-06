@@ -95,9 +95,40 @@ Every row needs its own **cold boot**. See the methodology traps in §6.
 | 1 | 7.45.96.0 | AP6256 | cold | `HT Avail timeout` |
 | 2 | 7.84.17.1 | RPi | warm | `phy0` registered, then `attach -110` |
 | 3 | 7.84.17.1 | AP6256 | cold | `HT Avail timeout` |
+| 3 | 7.84.17.1 | AP6256 | cold, re-run 2026-10-06 | `HT Avail timeout` — **reproduced**, operator confirmed power was removed |
 | 4 | 7.45.96.0 | RPi | — | **never actually tested**, see §6 |
 | 5 | 7.84.17.1 | RPi 43455 | — | not tested |
 | 6 | 7.45.69.0 (43455 fw) | AP6256 | — | not tested |
+
+**Combo 2 has never been tested cold.** It is the only combination that ever got
+past firmware upload — it registered a wiphy — but that was a warm result, and §6
+explains why warm and cold cannot be compared. It also differs from combo 3 by
+*only* the NVRAM file, which makes it a clean single-variable test. As of
+2026-10-06 it is staged on the board awaiting a power cycle.
+
+### The board's software environment
+
+Collected from the running board, because it constrains what the test scripts may
+assume:
+
+| Fact | Value | Consequence |
+|---|---|---|
+| kernel | 6.12.94, image built 2026-06-29 | the board was still on the pre-licence-fix image (`LICENSE.Broadcom`, not `LICENSE.Synaptics`) |
+| `wget` | `/usr/bin/wget`, full GNU | the test script can fetch candidates over the network |
+| `stat` | **absent** | `stat -c%s` fails; use `wc -c < file` |
+| `dmesg -C` | **unsupported** — busybox has no `-C` | see §6 trap 1, now confirmed rather than assumed |
+| dmesg per boot | 422 lines, all from that boot | a cold boot's buffer needs no clearing |
+| dropbear | no `/usr/libexec/sftp-server` | `scp` needs `-O` |
+
+The driver's first firmware request is board-qualified and always misses:
+
+```
+brcmfmac mmc2:0001:1: Direct firmware load for brcm/brcmfmac43456-sdio.radxa,rock-4b-plus.bin failed with error -2
+brcmfmac mmc2:0001:1: Falling back to sysfs fallback for: brcm/brcmfmac43456-sdio.bin
+```
+
+That is normal brcmfmac behaviour, not a missing-file problem — the fallback
+succeeds and the firmware is uploaded.
 
 Firmware blobs:
 
@@ -206,10 +237,12 @@ Pinned upstream ref: branch `trixie`, commit `3bab0f823f5b53150b76aab77093adef66
 These cost more time than the actual testing, and each one silently produces
 **plausible but wrong** results:
 
-1. **`dmesg -C` does not clear the ring buffer on this build.** A reload-based
-   test then prints stale lines in a fresh-looking format. An automated script
-   that reads that output will report a result that never happened. Worse than no
-   output, because it looks like data.
+1. **`dmesg -C` does not clear the ring buffer on this build.** Confirmed on the
+   board: busybox's `dmesg` has no `-C` option at all (`unrecognized option: C`),
+   and the buffer still held all 422 lines afterwards. A reload-based test then
+   prints stale lines in a fresh-looking format. An automated script that reads
+   that output will report a result that never happened. Worse than no output,
+   because it looks like data.
 2. **`rmmod` + `modprobe` does not re-probe** after a failed attach. The chip is
    left half-alive and no new dmesg lines appear at all, so the script appears to
    run but nothing is tested.
@@ -225,6 +258,17 @@ These cost more time than the actual testing, and each one silently produces
 `scripts/wifi-test.sh` encodes all four: it never tries to clear dmesg, it splits
 staging and checking across a real power cycle, and it prints an explicit verdict
 rather than leaving the judgement to log-reading.
+
+It also **identifies the installed combination by hashing the two files** rather
+than trusting the operator to remember which one was staged. That is deliberate:
+all three wrong conclusions above were mislabelled inputs, not wrong readings of
+the log. An unrecognised pair of hashes is reported as `UNKNOWN` and explicitly
+not attributed to any combo.
+
+One limit worth stating: the script **cannot tell you whether the boot was cold**.
+Nothing inside the running system records whether power was removed, and since
+`dmesg -C` does not work and `rmmod`/`modprobe` does not re-probe, a warm state
+leaves no distinguishing trace. That has to come from the operator.
 
 ## 7. Why this is probably not a defect in the port
 

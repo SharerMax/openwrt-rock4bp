@@ -79,7 +79,8 @@ fetch_all () {
 	echo "== candidates in $W =="
 	for f in bin.rpi bin.745 bin.55 txt.rpi txt.r55 txt.ap6; do
 		if [ -f "$W/$f" ]; then
-			echo "  $(sha256sum "$W/$f" | cut -c1-16)  $(stat -c%s "$W/$f")  $f"
+			# wc -c, not stat -c%s: this board's busybox has no stat.
+			echo "  $(sha256sum "$W/$f" | cut -c1-16)  $(wc -c < "$W/$f")  $f"
 		else
 			echo "  MISSING  $f"
 		fi
@@ -144,7 +145,48 @@ do_stage () {
 	echo "== then run: sh wifi-test.sh check =="
 }
 
+identify () {
+	# Which combination is actually on disk right now?
+	#
+	# Every wrong conclusion in this investigation came from labelling a result
+	# with the wrong inputs: a warm result recorded as cold, a stale dmesg read
+	# as fresh, a hash assumed rather than checked. So the state is derived from
+	# the files, never from what the operator remembers doing.
+	bin_h="$(sha256sum "$FW/brcmfmac43456-sdio.bin" 2>/dev/null | cut -d' ' -f1)"
+	txt_h="$(sha256sum "$FW/brcmfmac43456-sdio.txt" 2>/dev/null | cut -d' ' -f1)"
+
+	if [ -z "$bin_h" ] || [ -z "$txt_h" ]; then
+		echo "  UNKNOWN -- firmware files missing from $FW"
+		return
+	fi
+
+	# Read the table from a file, not a pipe: a pipe would put the loop in a
+	# subshell and `found` would be lost when it exits. And never iterate it with
+	# unquoted $(...) -- the labels contain spaces and would word-split apart.
+	tmp="$(mktemp)"
+	printf '%s\n' "$COMBOS" | grep -v '^$' > "$tmp"
+
+	found=0
+	while IFS='|' read -r n lbl b bs t ts; do
+		[ "$bs" = "$bin_h" ] && [ "$ts" = "$txt_h" ] || continue
+		echo "  combo $n: $lbl"
+		found=1
+	done < "$tmp"
+	rm -f "$tmp"
+
+	if [ "$found" = 0 ]; then
+		echo "  UNKNOWN -- these hashes match no combo in the table:"
+		echo "    bin    $bin_h"
+		echo "    nvram  $txt_h"
+		echo "  Do not attribute this result to any combo. Record the hashes instead."
+	fi
+}
+
 do_check () {
+	echo "== what is installed right now =="
+	identify
+
+	echo
 	echo "== brcmfmac lines from this boot =="
 	dmesg | grep -iE "brcmfmac|brcmf_|brcmf_sdio|ieee80211|wlan|mmc2" | sed 's/^/  /'
 
@@ -153,9 +195,6 @@ do_check () {
 	if ip link show wlan0 >/dev/null 2>&1; then
 		echo "  wlan0 PRESENT -- this combination works"
 		ip link show wlan0 | sed 's/^/    /'
-		echo
-		echo "  record it:"
-		sha256sum "$FW/brcmfmac43456-sdio.bin" "$FW/brcmfmac43456-sdio.txt" | sed 's/^/    /'
 	elif dmesg | grep -q "HT Avail timeout"; then
 		echo "  no wlan0 -- HT Avail timeout: firmware uploaded, chip never started"
 	elif dmesg | grep -q "dongle is not responding"; then
@@ -164,7 +203,9 @@ do_check () {
 		echo "  no wlan0 -- but no recognisable brcmfmac failure either; paste the log above"
 	fi
 	echo
-	echo "  record: the two sha256 sums above, and whether the boot was cold."
+	echo "  Record above: the combo the hashes identify, the verdict, and whether the"
+	echo "  boot was COLD (poweroff, unplug, wait, power on). 'reboot' does not reset"
+	echo "  the WiFi peripheral, so a warm result is not comparable to a cold one."
 }
 
 case "$1" in
