@@ -98,6 +98,46 @@
 	};
 };
 
+/*
+ * The WiFi power sequence must name its clock "ext_clock".
+ *
+ * rk3399-rock-pi-4.dtsi calls this clock "lpo", and uses that name consistently
+ * for the Bluetooth node as well. But the only name the MMC power-sequence
+ * driver ever looks up is "ext_clock":
+ *
+ *     pwrseq->ext_clk = devm_clk_get(dev, "ext_clock");
+ *     if (IS_ERR(pwrseq->ext_clk) && PTR_ERR(pwrseq->ext_clk) != -ENOENT)
+ *             return dev_err_probe(..., "external clock not ready\n");
+ *
+ * and drivers/mmc/core/pwrseq_simple.c then guards every use with
+ * !IS_ERR(). So with the inherited name the lookup returns -ENODEV, that is
+ * tolerated, the ERR_PTR is left in place, and the clock is silently never
+ * enabled. No error, no warning -- the WiFi power-on just proceeds without it.
+ * The binding agrees: mmc-pwrseq-simple.yaml declares clock-names as
+ * `const: ext_clock` with additionalProperties: false.
+ *
+ * What that clock is: rk808 index 1 resolves to clkout2, the RK808 PMIC's
+ * 32.768 kHz output, gated by CLK32KOUT2_EN in RK808_CLK32OUT_REG, with real
+ * prepare/unprepare ops. Enabling it is what actually switches the 32 kHz output
+ * on, and it happens between powering the card and releasing its reset.
+ *
+ * Why this matters here, and how it was found: Armbian runs the WiFi fine on this
+ * same board, with the same brcmfmac driver and byte-identical firmware, NVRAM
+ * and clm_blob. Its live device tree differs from ours in exactly one place in
+ * the WiFi power path -- this property. Armbian names it "ext_clock"; upstream
+ * Radxa names it "lpo"; the driver only honours the former.
+ *
+ * The symptom matches: the firmware uploads successfully and the chip then never
+ * asserts HT_AVAIL, which is what a chip that came out of reset without its
+ * low-power clock present would look like.
+ *
+ * This is a conformance fix, not a tuning value. See
+ * docs/WIFI-INVESTIGATION.md section 0.
+ */
+&sdio_pwrseq {
+	clock-names = "ext_clock";
+};
+
 /* Bluetooth on UART0 */
 &uart0 {
 	status = "okay";

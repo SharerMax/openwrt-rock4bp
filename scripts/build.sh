@@ -14,6 +14,14 @@ umask 022
 LOG=/tmp/build-full.log
 : > "$LOG"
 
+# Recorded before anything else so the log can be dated. On 2026-10-06 a build was
+# launched with setsid/nohup, failed to start without any error, and the
+# verification block then read this file from the *previous* run and reported a
+# clean build. Nothing had been compiled and the image was unchanged. Dating the
+# log makes that class of mistake visible instead of silent.
+START="$(date '+%Y-%m-%d %H:%M:%S')"
+echo "=== build started $START ===" >> "$LOG"
+
 {
   echo "=== manifest fixups ==="
 
@@ -80,11 +88,51 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
     check "absent from manifest: $p" "! grep -q '^$p ' $M"
   done
 
-  check "dtb is the current 63779-byte build" \
-    "[ \$(stat -c%s build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/image-rk3399-rock-4b-plus.dtb 2>/dev/null) = 63779 ]"
+  # The dtb must be NEWER than the patch that produces it, and it must actually
+  # contain the properties this port depends on.
+  #
+  # A size assertion is not enough, and it is not even a staleness check: on
+  # 2026-10-06 a build was launched, silently failed to start, and the
+  # verification block then read a log from the previous run and reported nine
+  # OK lines and REAL_EXIT_CODE=0. Nothing had been compiled. Worse, a stale dtb
+  # still has the right size, so "dtb is the current 63779-byte build" passed
+  # while the tree contained none of the changes.
+  #
+  # Two assertions, because either alone has a failure mode:
+  #   - mtime: catches "not rebuilt at all"
+  #   - content: catches "rebuilt from the wrong source", and is the one that
+  #     actually proves the WiFi power-sequence fix is in the image
+  PATCH=target/linux/rockchip/patches-6.12/0001-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch
+  DTB=build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/image-rk3399-rock-4b-plus.dtb
+  DTC=build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/scripts/dtc/dtc
+
+  check "dtb is newer than the patch that builds it" \
+    "[ -f '$DTB' ] && [ '$DTB' -nt '$PATCH' ]"
+
+  # clock-names must be "ext_clock" and not "lpo". mmc-pwrseq-simple only ever
+  # looks up "ext_clock", so with "lpo" the RK808 32 kHz output is silently
+  # never enabled before the WiFi reset is released. See
+  # docs/WIFI-INVESTIGATION.md section 0.
+  check "dtb enables the WiFi power-sequence clock (ext_clock, not lpo)" \
+    "'$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -qE \"clock-names = \\\"ext_clock\\\"\""
+
+  check "dtb still carries the board model" \
+    "'$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -q \"Radxa ROCK 4B+\""
 
   check "kernel patch applied without rejects" \
     "! find build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/arch -name '*.rej' | grep -q ."
+} >> "$LOG" 2>&1
+
+# Make the log's own freshness visible. A reader who finds an old log must not be
+# able to mistake it for a fresh run, because that is exactly the mistake made on
+# 2026-10-06: a build that never started, verified against the previous run's log.
+{
+  echo
+  echo "=== log provenance ==="
+  echo "  started   : $START"
+  echo "  this file : $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "  age       : $(( $(date +%s) - $(stat -c %Y "$LOG") ))s since last write"
+  echo "  exit code : $(grep -o 'REAL_EXIT_CODE=[0-9]*' "$LOG" | tail -1)"
 } >> "$LOG" 2>&1
 
 exit $rc
