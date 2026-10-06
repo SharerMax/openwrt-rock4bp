@@ -1,0 +1,23 @@
+# The three blobs and the licence text are deliberately absent from this repo.
+#
+# brcmfmac43456-sdio.{bin,txt,clm_blob} are proprietary and covered by the
+# Synaptics DRIVER END USER LICENSE AGREEMENT (BINARY DISTRIBUTION); shipping
+# them into a git history is effectively permanent and hard to undo. The OpenWrt
+# tree ignores the same path for the same reason.
+#
+# They only need to exist on disk for the build to work. Fetch them from
+# RPi-Distro/firmware-nonfree, branch trixie, commit
+# 3bab0f823f5b53150b76aab77093adef6655b920:
+#
+#   debian/added-firmware/brcm/brcmfmac43456-sdio.bin
+#   debian/added-firmware/brcm/brcmfmac43456-sdio.txt
+#   debian/added-firmware/brcm/brcmfmac43456-sdio.clm_blob
+#
+# ...into this directory as brcmfmac43456-sdio.bin, .txt and .clm_blob. The
+# licence text goes alongside as LICENSE.Synaptics, extracted from debian/copyright
+# in the same commit by scripts/extract-synaptics-license.py.
+#
+# Build/Verify in ../Makefile asserts all four sha256 sums and refuses to build
+# on a mismatch, so a wrong or truncated download cannot slip through silently.
+*
+!.gitignore

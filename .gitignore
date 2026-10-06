@@ -1,0 +1,7 @@
+# Serial console captures from the board. Regenerated on every boot, and they
+# are the largest files in the tree by far.
+log/
+
+# Not a build directory. Nothing here is generated.
+*.tmp
+*~

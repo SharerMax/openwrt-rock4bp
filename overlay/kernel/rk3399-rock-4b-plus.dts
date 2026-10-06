@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Radxa ROCK 4B+ -- early hardware revision (V1.6 / V1.72)
+ * Copyright (c) 2019 Akash Gajjar <Akash_Gajjar@mentor.com>
+ * Copyright (c) 2019 Pragnesh Patel <Pragnesh_Patel@mentor.com>
+ */
+
+/*
+ * This board is the same hardware as what Radxa used to call "ROCK Pi 4B Plus"
+ * and now calls "ROCK 4B+". The 2022 rename dropped "Pi" from the product line
+ * name; the model suffix is what distinguishes boards.
+ *
+ * This file is deliberately a thin delta on top of two upstream, hardware
+ * verified files, rather than a from-scratch description:
+ *
+ *   rk3399-op1.dtsi        OP1 (RK3399-T) operating points, incl. A72 to 2016 MHz
+ *   rk3399-rock-pi-4.dtsi   the whole 4A/4B family: RK808 PMIC, regulators,
+ *                           gmac RGMII timing, ES8316 audio on i2s0, LEDs,
+ *                           storage, USB, 40-pin pinctrl
+ *
+ * An earlier version of this port hand-wrote ~900 lines and guessed the PMIC
+ * type, regulator topology, audio codec address, RGMII delays and headphone
+ * GPIOs. Every one of those guesses was wrong or unavailable, and the result was
+ * a board that booted the kernel but had no working power rail, no Ethernet and
+ * no USB. Inheriting the upstream files removes that entire class of error.
+ *
+ * Verified upstream hardware facts this file relies on, from
+ * rk3399-rock-pi-4.dtsi:
+ *   - PMIC is RK808 at i2c0 0x1b, and the node lives INSIDE &i2c0
+ *   - Ethernet PHY supply is vcc3v3_lan, RGMII tx_delay 0x28 / rx_delay 0x11
+ *   - ES8316 is at i2c1 0x11, takes mclk from SCLK_I2S_8CH_OUT, sits on i2s0
+ *   - headphone detect is gpio1_A0, codec interrupt is gpio1_A1
+ *   - status LED (blue) is gpio3_PD5
+ *
+ * Board-specific to this revision:
+ *   - V1.6/V1.72 have a 4 MB SPI flash populated, so SPI is left enabled in
+ *     U-Boot for booting and for the environment. Later V1.73 boards ship with
+ *     the SPI flash unpopulated.
+ *   - RAM may be 2 GB or 4 GB; nothing in the device tree needs to change.
+ */
+
+/dts-v1/;
+#include "rk3399-op1.dtsi"
+#include "rk3399-rock-pi-4.dtsi"
+
+/ {
+	model = "Radxa ROCK 4B+";
+	compatible = "radxa,rock-4b-plus", "radxa,rockpi4b-plus", "radxa,rockpi4", "rockchip,rk3399";
+
+	aliases {
+		mmc2 = &sdio0;
+	};
+
+	/*
+	 * No gpio-keys node on purpose.
+	 *
+	 * An earlier revision guessed gpio4_B2 for the on-board button so that
+	 * kmod-gpio-button-hotplug could see it. That guess was wrong and it was
+	 * dropped: holding the button produces no change on any GPIO, and neither
+	 * rk3399-rock-pi-4b-plus.dts nor Radxa's own rk3399-rock-pi-4b-plus.dts
+	 * declares a gpio-keys node.
+	 *
+	 * The reason is that the button is not a Linux input. Per Radxa's
+	 * documentation the on-board button is a *Maskrom* button, and maskrom
+	 * mode is selected by the boot ROM sampling the pin at power-on: hold the
+	 * button while applying power, and the ROM enters maskrom instead of
+	 * loading the SPI flash. There is no Linux-visible event to describe.
+	 *
+	 * Leaving the node in would also permanently claim gpio4_B2, which the
+	 * 40-pin header and expansion HATs may want.
+	 *
+	 * RESET and maskrom are likewise bootloader-level and need no DT nodes.
+	 */
+};
+
+/*
+ * IMPORTANT: including rk3399-rock-pi-4.dtsi is NOT equivalent to including
+ * rk3399-rock-pi-4b-plus.dts. The dtsi carries only the shared 4A/4B plumbing;
+ * the board file carries the four overrides below, and rk3399-base.dtsi ships
+ * the affected controllers as status = "disabled". Dropping them is exactly
+ * why WiFi was dead on the first boot: sdio0 stayed disabled, the power
+ * sequence never ran, and the reset line (gpio0_B2) was left low with the
+ * chip held in reset.
+ */
+
+/* SDIO WiFi (AP6256 / BCM43456) */
+&sdio0 {
+	status = "okay";
+
+	brcmf: wifi@1 {
+		compatible = "brcm,bcm4329-fmac";
+		reg = <1>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PA3 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "host-wake";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_host_wake_l>;
+	};
+};
+
+/* Bluetooth on UART0 */
+&uart0 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "brcm,bcm4345c5";
+		clocks = <&rk808 1>;
+		clock-names = "lpo";
+		device-wakeup-gpios = <&gpio2 RK_PD3 GPIO_ACTIVE_HIGH>;
+		host-wakeup-gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_HIGH>;
+		shutdown-gpios = <&gpio0 RK_PB1 GPIO_ACTIVE_HIGH>;
+		max-speed = <1500000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_host_wake_l &bt_wake_l &bt_enable_h>;
+		vbat-supply = <&vcc3v3_sys>;
+		vddio-supply = <&vcc_1v8>;
+	};
+};
+
+/* Headphone jack detect: 4-ring 3.5 mm jack, microphone input by default */
+&sound {
+	hp-det-gpio = <&gpio1 RK_PA0 GPIO_ACTIVE_HIGH>;
+};
+
+&es8316 {
+	pinctrl-0 = <&hp_detect &hp_int>;
+	pinctrl-names = "default";
+	interrupt-parent = <&gpio1>;
+	interrupts = <RK_PA1 IRQ_TYPE_LEVEL_HIGH>;
+};
