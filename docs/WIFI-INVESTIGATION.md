@@ -337,6 +337,12 @@ out. `-110` is `ETIMEDOUT`.
 
 ## 4. Test matrix
 
+> ⚠️ **Every row in this table is pre-fix.** They record the search, and every one of
+> them failed for the same reason: `clock-names = "lpo"` meant the 32.768 kHz clock was
+> never enabled, so no firmware combination could work. The matrix was testing the wrong
+> variable. After the one-property fix in §0, no combination is needed at all -- see §8
+> for the working result.
+
 Every row needs its own **cold boot**. See the methodology traps in §6.
 
 | # | firmware | NVRAM | boot | result |
@@ -600,6 +606,10 @@ leaves no distinguishing trace. That has to come from the operator.
 
 ## 7. Why this is probably not a defect in the port
 
+Kept because the reasoning still holds -- the port was not at fault, and the search for
+a fault in it was the wrong search. The conclusion was reached by comparison with Armbian
+on the same board (§0), not from anything below.
+
 * The same failure is reported on other AP6256 boards with brcmfmac — Orange Pi 5
   Pro (`brcmf_attach: dongle is not responding: err=-52`, unstable, fixed by
   switching to Broadcom's proprietary `bcmdhd-sdio`) and PineBook Pro. The same
@@ -616,8 +626,42 @@ leaves no distinguishing trace. That has to come from the operator.
 
 Nothing blocking. WiFi works, and the shipped NVRAM now matches Armbian's.
 
+### Re-checked against the board, 2026-10-06
+
+OpenWrt 25.12.5 / Linux 6.12.94, so none of the above is carried over from the pre-fix
+investigation:
+
+```
+brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4345/9 wl0: May 14 2020 17:26:08 version 7.84.17.1 (r871554)
+wlan0: <BROADCAST,MULTICAST>  link/ether 08:fb:ea:65:f8:da
+/sys/class/net/wlan0/device/driver -> brcmfmac
+
+$ ip link set wlan0 up && iw dev wlan0 scan | grep -c '^BSS'
+15
+```
+
+No `HT Avail timeout`. The MAC matches what Armbian reported for the same chip.
+
+Two traps hit during this re-check, both worth adding to §6:
+
+  - **A disabled radio looks exactly like dead hardware.** The shipped config carries
+    `default_radio0.disabled='1'`, so at boot `wlan0` is `state DOWN` and a scan returns
+    nothing. Nothing is wrong with the chip. Bring the interface up and scan without
+    configuring an AP -- check the config before blaming hardware.
+  - **busybox `ip` does not accept `-br`.** `ip -br link show | grep wlan` returns nothing,
+    which reads as "no wireless adapter". Use `ip link show`. The first version of the
+    probe script had this bug.
+
+Also expected and harmless: `Direct firmware load for
+brcm/brcmfmac43456-sdio.radxa,rock-4b-plus.bin failed with error -2`. The driver tries a
+board-suffixed name from the DTB `compatible`, falls back to the generic filename, and the
+fallback works -- the version string follows immediately in the log.
+
+### Remaining work
+
 1. **eMMC install.** Unrelated to WiFi, still pending. The `dd` procedure is
-   checked in FLASHING.md §7.
+   checked in FLASHING.md §7. Note the chip now carries a reinstalled Armbian, not the
+   layout this file assumed when the `dd` was first run.
 2. HDMI and audio remain out of scope, as before.
 
 The firmware/NVRAM matrix in §4 is kept as a record, not as a work list. Combo 1
