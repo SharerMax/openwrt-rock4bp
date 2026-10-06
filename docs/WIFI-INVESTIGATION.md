@@ -91,6 +91,20 @@ kernel core, the kernel config, and anything else in the tree.
 
 ### Ruled out along the way
 
+* **The kernel config.** Diffed ours against Armbian's `/boot/config-6.18.54-*`
+  across MMC, SDIO, CRDA, wifi, clock and regulator symbols. The only differences
+  are builtin-versus-module — `CONFIG_CFG80211` and `CONFIG_MAC80211` are absent
+  from our kernel `.config` because OpenWrt ships them through the `kmod-brcmfmac`
+  package rather than the kernel config — plus `CONFIG_CFG80211_CRDA_SUPPORT` and
+  `CONFIG_CFG80211_WEXT`, which are regulatory-domain and wireless-extension
+  features with no bearing on SDIO function-1 register access. No candidate.
+
+  A trap worth recording: OpenWrt's top-level `.config` has only ~830 symbols and
+  contains no `CONFIG_MMC` at all. It is the board-and-package config, not the
+  kernel config. The kernel config is generated during the build and lives at
+  `build_dir/target-*/linux-rockchip_armv8/linux-6.12.94/.config`. Comparing
+  against the top-level file produces a comparison of nothing against everything.
+
 * **OpenWrt's Raspberry Pi brcmfmac patch series.** OpenWrt applies eight RPi
   patches to every brcmfmac build (`package/kernel/mac80211/patches/brcm/`).
   **No patch touches `htclk`, `CHIPCLKCSR`, `ALP`, `alp_only`, `clkctl`,
@@ -104,23 +118,29 @@ kernel core, the kernel config, and anything else in the tree.
 * **`brcmfmac: F1 signature read`**, which Armbian logs and we never do, is a
   `pr_debug`. Armbian simply runs with `debug` enabled. Not a behavioural
   difference.
+* **Power sequencing.** Neither device tree gives `mmc@fe310000` a `*-supply`, so
+  the SDIO rail is not regulator-managed on either, and both `mmc-pwrseq-simple`
+  nodes carry the same reset GPIO with no `post-reset-delay-ms`. The supply path
+  is the same on both.
 
 ### What this leaves
 
-The failure is in the OpenWrt kernel, and it is not yet localised. The remaining
-candidates, in the order worth testing:
+The failure is in the OpenWrt kernel, and it is not yet localised. With the config
+diff and the RPi patches both eliminated, the remaining candidates are:
 
-1. **The 6.12 vs 6.18 delta in the MMC/SDIO core.** Our brcmfmac is backported but
-   `drivers/mmc` is 6.12. The SDIO card enumerates at SDR104 on both, so the bus
-   works; what may differ is the sequencing around function-1 register access.
-2. **Kernel config.** Untested, and cheap to compare against Armbian's
-   `/boot/config-*`.
-3. **Reset-to-probe timing.** The chip uploads firmware and then never asserts
-   HT_AVAIL. A longer `post-reset-delay-ms` on the `mmc-pwrseq` node is a one-line
-   DTS change that directly targets the symptom, and neither DT sets the property
-   today.
+1. **The 6.12 vs 6.18 delta in the MMC/SDIO core.** Our brcmfmac is backported to
+   6.18.26 but `drivers/mmc` is 6.12. The SDIO card enumerates at SDR104 on both,
+   so the bus works; what may differ is the sequencing around function-1 register
+   access, which is exactly where the attach times out.
+2. **Reset-to-probe delay.** The chip accepts firmware and then never asserts
+   HT_AVAIL, which is what a chip that is not ready yet looks like. A
+   `post-reset-delay-ms` on the `mmc-pwrseq` node is a one-line DTS change that
+   targets the symptom directly, and neither device tree sets the property today,
+   so it is a genuinely untried value rather than a change to a tuned one.
 
-Items 2 and 3 are both cheap enough to do before anything more elaborate.
+Beyond those, the honest options are a kernel bisect or a newer kernel base, both
+large changes to an otherwise working port. They should not be attempted while the
+two cheap tests above are untried.
 
 ---
 
