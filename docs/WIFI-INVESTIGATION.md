@@ -94,17 +94,29 @@ Every row needs its own **cold boot**. See the methodology traps in §6.
 |---|---|---|---|---|
 | 1 | 7.45.96.0 | AP6256 | cold | `HT Avail timeout` |
 | 2 | 7.84.17.1 | RPi | warm | `phy0` registered, then `attach -110` |
-| 2 | 7.84.17.1 | RPi | **cold, 2026-10-06** | **`phy0` registered, then `attach -110`** — identical to the warm result |
+| 2 | 7.84.17.1 | RPi | **cold, 2026-10-06** | `phy0` registered, then `attach -110` |
+| 2 | 7.84.17.1 | RPi | **cold, 2026-10-06, from the shipped image** | `phy0` registered, then `attach -110` |
 | 3 | 7.84.17.1 | AP6256 | cold | `HT Avail timeout` |
-| 3 | 7.84.17.1 | AP6256 | cold, re-run 2026-10-06 | `HT Avail timeout` — **reproduced** |
+| 3 | 7.84.17.1 | AP6256 | **cold, 2026-10-06** | `HT Avail timeout` — reproduced |
 | 4 | 7.45.96.0 | RPi | — | **never actually tested**, see §6 |
-| 5 | 7.84.17.1 | RPi 43455 | — | not tested |
-| 6 | 7.45.69.0 (43455 fw) | AP6256 | — | not tested |
+| 5 | 7.84.17.1 | RPi 43455 | — | not tested, low value |
+| 6 | 7.45.69.0 (43455 fw) | AP6256 | — | not tested, low value |
+
+Both NVRAMs now have **two cold samples each, all consistent**, and the operator
+confirmed power was removed for every one. Two is still thin given the PineBook Pro
+owner's "80% of the time" report, so §8 keeps a repeat on the list.
+
+The second combo-2 sample was run from the **shipped image** rather than from
+manually staged files. That matters beyond the extra data point: until then every
+result in this table depended on somebody having copied blobs onto a running
+board, and none of it was reproducible from a build artefact. Now the image itself
+produces the behaviour, verified by the firmware hashes matching the package and
+`wifi-test.sh check` identifying combo 2 from them.
 
 ### The one controlled comparison in this investigation
 
 Combos 2 and 3 differ by **exactly one file** — the NVRAM — and both have now been
-booted cold:
+booted cold, twice each:
 
 ```
 combo 3, AP6256 NVRAM:            combo 2, RPi NVRAM:
@@ -121,10 +133,6 @@ This also settles a question that had been open since §6: combo 2's warm result
 not an artefact of the warm state. Cold reproduces it exactly. The "warm and cold
 are incomparable" caution was correct as a rule, and applying it here shows the warm
 result was genuine.
-
-Two samples each, and consistent. Not many, given the PineBook Pro owner's report
-that a full power cycle only works "80% of the time" — so variance exists and these
-should be repeated before being treated as settled. See §8.
 
 ### What the NVRAM difference actually is
 
