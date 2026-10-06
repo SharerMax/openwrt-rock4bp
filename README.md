@@ -10,11 +10,15 @@ WiFi 排查有独立文档：[`docs/WIFI-INVESTIGATION.md`](docs/WIFI-INVESTIGAT
 
 ---
 
-## 状态：系统可启动可用
+## 状态：⚠️ 板子当前变砖，根因已定位并修复，未在真机复验
 
-分支 `radxa-rock-4b-plus`，基线 `v25.12.5`：
+分支 `radxa-rock-4b-plus`，基线 `v25.12.5`，领先 12 个提交：
 
 ```
+20f3a4e1ff  uboot-rockchip: fix the SPI flash note, and end the dtsi patch cleanly
+2cb9844988  uboot-rockchip: add the ROCK 4B+ board -u-boot.dtsi
+06180bd8d3  firmware: ship the vendor's AP6256 NVRAM instead of a Raspberry Pi's
+82030de3fc  rockchip: radxa,rock-4b-plus: name the WiFi power-sequence clock ext_clock
 7bd8aebefa  firmware: correct the .gitignore note on the untracked WiFi blobs
 afd77222d2  firmware: brcmfmac-firmware-43456-sdio: correct the licence and the source
 a1c0ac7353  firmware: add brcmfmac-firmware-43456-sdio for the AP6256
@@ -27,9 +31,29 @@ ac700b2f8d  rockchip: do not track the .config backup file
 
 未推送到任何上游 remote。设备树是**继承上游**的 130 行 delta，维护成本极低。
 
+> ### ⚠️ 板上那份 U-Boot 起不来，原因是移植本身的缺陷
+>
+> SPI 上的 U-Boot 在 TPL 阶段就退出，因为它的板级设备树缺 `rockchip,sdram-params`，
+> 无法初始化 DRAM：
+>
+> ```
+> rk3399_dmc_of_to_plat: Cannot read rockchip,sdram-params -1
+> DRAM init failed: -1
+> ```
+>
+> **构建过程完全静默** —— `idbloader.img` 正常产出、大小也正常。这个缺陷只能靠
+> "把这份引导程序刷进 SPI" 才暴露，而那时已经无法写入替换（RK3399 的启动顺序是
+> SPI → eMMC → SD，SPI 在最前）。详见 `docs/BRICK-U-BOOT-DDR.md`，
+> 恢复步骤见 `FLASHING.md` 第 10 节。
+>
+> **已修**：补上 `arch/arm/dts/rk3399-rock-4b-plus-u-boot.dtsi`，重建后
+> `rockchip,sdram-params` 与 `binman` 节点都在，`build.sh` 加了 4 条断言盯住。
+> **但修复后的引导程序尚未在真机上验证过。**
+
 本移植的文档、overlay 源文件和脚本在**另一个仓库**（本机 `rockpi4bp`）里，两个仓库
 都没有 remote。`scripts/sync-overlay.sh` 负责比对两边的 `overlay/` 与 OpenWrt 树 ——
-它第一次运行就查出了一处已存在的漂移，详见该脚本的说明。
+它第一次运行就查出了一处已存在的漂移，并且现在还会把三个补丁源逐一和它们生成的
+补丁比对（`scripts/check-patch-sources.sh`）。
 
 ### 已验证可用
 
@@ -149,25 +173,40 @@ curl），用 `git ls-remote`。
 
 ```
 README.md                                          本文件
-FLASHING.md                                        烧卡 / 烧 eMMC / 兜底方案
+FLASHING.md                                        烧卡 / 烧 eMMC / 变砖恢复
 docs/WIFI-INVESTIGATION.md                         WiFi 排查完整记录
+docs/BRICK-U-BOOT-DDR.md                           U-Boot 变砖的排查记录
 radxa_rock4bp_product_brief_Revision_1.1.pdf      Radxa 官方 Product Brief
 overlay/                                           按 OpenWrt 源码树路径镜像
   target/linux/rockchip/image/armv8.mk             +20 行：radxa_rock-4b-plus
   package/boot/uboot-rockchip/Makefile             +8 行：U-Boot 变体 + UBOOT_TARGETS
   package/firmware/broadcom-nonfree/Makefile       新增：BCM43456 固件包
-  u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   kernel/rk3399-rock-4b-plus.dts                   130 行 delta，继承上游两个 dtsi
+  u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
+  u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         构建脚本（manifest + 构建后 9 项校验）
-  regen-dts-patch.sh                               重新生成内核/U-Boot 补丁 + dtc 校验
+  build.sh                                         构建脚本（manifest + 构建后 12 项校验）
+  regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
+  sync-overlay.sh                                  比对 overlay/ 与远端源码树（双向需显式指定）
+  check-patch-sources.sh                           把三个补丁源和它们生成的补丁逐一比对
+  extract-patch-file.sh                            从多文件补丁里取出单个文件的新增内容
+  deploy.sh                                        把整盘镜像写进 U 盘 / SD / eMMC
+  write-idbloader-sd.ps1                           Windows：把 idbloader 写到卡的 LBA 0x40
   wifi-test.sh                                     AP6256 上电测试（每组合一次冷启动）
-  deploy.sh                                        把 overlay 同步到远端源码树
 log/  tty2.txt tty3.txt tty4.txt tty5.txt          四次上机的串口日志
 ```
 
+`overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi` 是**必须**的文件，不是可选补充：
+U-Boot 按板名找它，找不到就静默回退，回退版本没有 DRAM 参数。详见
+[U-Boot 侧](#u-boot-侧曾判断为简单结果是错的)。
+
 `scripts/build.sh` 是**包集合清单的唯一可复现来源** —— `.config` 在 OpenWrt 里是
 gitignore 的，只存在于构建机上，所以清单决定写进了脚本里。
+
+`overlay/` 里有两类文件，不要混为一谈：一类是**直接进树的源文件**（`*.mk`，由
+`sync-overlay.sh` 双向同步），另一类是**补丁源**（`*.dts` / `*defconfig` /
+`*-u-boot.dtsi`），它们本身不进树，要先生成补丁。补丁源和补丁脱节过一次，
+现在由 `check-patch-sources.sh` 每次都比对。
 
 远端同步采用覆盖法：`scp` 把 `overlay/` 下的文件按相对路径拷进远端源码树。因上游固定在
 `v25.12.5`，本地保存完整副本不会有漂移问题。
@@ -297,7 +336,11 @@ rk809 节点被放在根节点，且 &i2c0 从未使能（base.dtsi 默认 statu
 
 ---
 
-## U-Boot 侧（比预想简单）
+## U-Boot 侧（曾判断为"简单"，结果是错的）
+
+> 这一节原先写着"首次上机 DRAM 初始化成功，说明这份 defconfig 可用"。**那句话是错的**：
+> 当时起作用的 U-Boot 是 SPI 上原有的 Armbian 那份，不是本移植编出来的。
+> 详见 `docs/BRICK-U-BOOT-DDR.md`。
 
 - mainline U-Boot 2025.10 **已有** `rock-4se-rk3399_defconfig`、`rock-4c-plus-rk3399_defconfig`
 - **没有** `rock-4b-plus-rk3399_defconfig` → 需新增（基于 4SE，改 2 行 DT 引用）
@@ -305,10 +348,55 @@ rk809 节点被放在根节点，且 &i2c0 从未使能（base.dtsi 默认 statu
   `CONFIG_PMIC_RK8XX`、`CONFIG_REGULATOR_RK8XX`、`CONFIG_MMC_SDHCI_{SDMA,ROCKCHIP}`、
   `CONFIG_NVME_PCI`、`CONFIG_SCSI_AHCI`、`CONFIG_VIDEO_ROCKCHIP_HDMI`、
   `CONFIG_DISPLAY_ROCKCHIP_HDMI`、`CONFIG_LED_GPIO` 及 SPI 相关项 —— 与本板需求高度吻合。
-  **首次上机 DRAM 初始化成功**（LPDDR4 双通道 2048MB×2），说明这份 defconfig 可用。
 - RK3399 走通用 `CONFIG_TARGET_ROCKPI4_RK3399` 板级代码，**不需要板级 C 驱动**。
 - `dts/upstream/src/arm64/Makefile` 用通配符扫描 `*/*.dts`，所以把 `.dts` 放进
   `dts/upstream/src/arm64/rockchip/` 就够了，**不需要改任何 Makefile**。
+
+### ⚠️ 但光有 defconfig 和 .dts 是不够的 —— 缺一个板级 U-Boot dtsi
+
+`arch/arm/dts/<board>-u-boot.dtsi` 是**必需的**，而这个文件**不存在也不会报错**。
+
+`scripts/Makefile.lib` 按板名去找它，命中就用，找不到就往下退：
+
+```make
+u_boot_dtsi_options = $(strip $(wildcard <board>-u-boot.dtsi) \
+                       $(wildcard $(CONFIG_SYS_SOC)-u-boot.dtsi) ...)
+# We use the first match to be included
+dtsi_include_list  = $(notdir $(firstword $(u_boot_dtsi_options)))
+```
+
+**这是优先级链、只取第一个命中，不是并集。** 本板原先没有板级文件，于是退到通用的
+`rk3399-u-boot.dtsi` —— 它有 `binman` 节点和 `bootph-*` 标记，**就是没有
+`rockchip,sdram-params`**。U-Boot 的每个 RK3399 板子都有这个文件（rock-pi-4a、
+rock-pi-4c、rock-4c-plus、rock-4se、nanopc-t4），所以它们都能起。
+
+缺了它的后果是**构建期完全静默**：`idbloader.img` 正常产出、大小正常，
+`scripts/build.sh` 原来的 9 项校验一条都不报警，直到那份引导程序被刷进 SPI 才暴露。
+
+修法（`overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi`）是**两个 include**：
+
+```
+rk3399-u-boot.dtsi              binman 节点、bootph-* 标记
+rk3399-sdram-lpddr4-100.dtsi    只有 &dmc { rockchip,sdram-params = <...> }
+```
+
+第一个 include 必须**显式写出来**，不能指望构建系统兜底：一旦有了板级文件，它就成了
+第一个命中，通用那份被**顶掉**而不是叠加。少了这一句，构建会改挂在
+
+```
+binman: Device tree './u-boot.dtb' does not have a 'binman' node
+```
+
+上 —— 这是补这个文件时踩到的第二个坑，第一个坑是运行时变砖，第二个坑是构建期失败，
+后者反而更容易发现。
+
+参数选 `lpddr4-100` 的依据：本板是 **64 位双通道 LPDDR4 @3200Mb/s**（Radxa 官方
+spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文件。
+没有走 `rk3399-rock-pi-4-u-boot.dtsi`，因为它还会顺带加上 `&sdhci` 时序覆盖和
+`leds` 节点 —— eMMC 本来就能跑到 HS400，缺的只有 DRAM 参数。
+
+### 其余仍然成立的部分
+
 - **`UBOOT_TARGETS` 是硬编码白名单**：只加 `define U-Boot/...` 不够，必须在
   `package/boot/uboot-rockchip/Makefile` 的 `UBOOT_TARGETS` 里登记。这曾经是一个真正的
   阻塞点。
@@ -328,8 +416,10 @@ rk809 节点被放在根节点，且 &i2c0 从未使能（base.dtsi 默认 statu
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 9 项校验     ← 不是装饰
+4. 构建后 12 项校验     ← 不是装饰
 ```
+
+（"12 项"是 12 条 `check` 语句，其中一条循环跑 4 次，所以日志里打印 15 行。）
 
 ### 三个必踩的坑
 
@@ -347,7 +437,7 @@ rk809 节点被放在根节点，且 &i2c0 从未使能（base.dtsi 默认 statu
 dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会先剥掉残留行并断言它确实
 不存在。
 
-### 构建后校验（9 项）
+### 构建后校验（12 条 check，日志打印 15 行）
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -362,12 +452,22 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  absent from manifest: cypress-firmware-4356-sdio
   OK/FAILED  absent from manifest: brcmfmac-nvram-4356-sdio
   OK/FAILED  dtb is newer than the patch that builds it
-OK/FAILED  dtb enables the WiFi power-sequence clock (ext_clock, not lpo)
-OK/FAILED  dtb still carries the board model
+  OK/FAILED  dtb enables the WiFi power-sequence clock (ext_clock, not lpo)
+  OK/FAILED  dtb still carries the board model
   OK/FAILED  kernel patch applied without rejects
+  OK/FAILED  u-boot dtb is newer than the patch that builds it
+  OK/FAILED  u-boot dtb carries the RK3399 DRAM parameters (rockchip,sdram-params)
+  OK/FAILED  u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)
+  OK/FAILED  both idbloader variants built
 ```
 
+最后 4 项是 2026-10-06 变砖之后加的。**它们的由来就是一个教训：**
+`rockchip,sdram-params` 缺失时构建返回 0，`idbloader.img` 正常产出，前 9 项全过 ——
+因为所有既有校验看的都是**文件在不在、大小对不对、内容是不是这个项目要的**，
+没有一个看"这块板子能不能靠它启动"。
+
 **教训**：输出不说谎，但得知道该看什么，而且要**强制**自己去看。
+校验项要按"这个缺陷能不能溜过去"来选，不是按"我改了什么"来选。
 
 ### 新建 OpenWrt 包时两个必踩的坑
 
@@ -557,7 +657,7 @@ maskrom"。Radxa **当前**文档对 4A+/4B+ 只提一个 Maskrom 按键，操�
 
 ---
 
-## eMMC 安装：布局已核对
+## eMMC 安装：`dd` 已完成并校验，但从未成功启动过
 
 sysupgrade 镜像是 **DOS/MBR**，磁盘标识 `0x5452574f`：
 
@@ -567,7 +667,8 @@ sysupgrade 镜像是 **DOS/MBR**，磁盘标识 `0x5452574f`：
 | p2 | 131072–1179647 | 512 MiB | rootfs |
 
 U-Boot FIT 头 `d00dfeed` 在 **8 MiB** 偏移。镜像里**不含** TPL/SPL/idbloader ——
-SPI 上已有 U-Boot，够了。
+引导链在 SPI 上，见 [U-Boot 侧](#u-boot-侧曾判断为简单结果是错的) 和 `FLASHING.md` 第 7 节
+（含"引导程序在 eMMC/SD 上位于 LBA 0x40 而非 LBA 0"这个容易查错的位置）。
 
 U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，`mmc0` =
 `fe330000` = eMMC，排在 USB 之前。**写完直接插电就能起，不用改 U-Boot 环境变量。**
@@ -575,14 +676,19 @@ U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，`mmc0` 
 ⚠️ 从 U 盘启动时**不要用 `sysupgrade`** —— root 在 `/dev/sda2`，它会把 U 盘当升级目标。
 走手工 `dd`。⚠️ 不要写 `mmcblk0boot0` / `boot1` / `rpmb`。
 
-⚠️ **eMMC 上已经有东西了**：日志里只有裸分区 `mmcblk0: p1`（没有大小也没有名字），
-U-Boot 跳过它直接走了 USB。`dd` 会覆盖 MBR 和 p1/p2，**不可逆**。先只读地看清：
+### 当前状态
 
-```sh
-fdisk -l /dev/mmcblk0
-blkid /dev/mmcblk0p1
-mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc && ls -la /mnt/emmc
-```
+`dd` 已执行完毕并校验：整盘 sha256 与镜像 sha256 **一致**
+（`5847c611…`），MBR 也已核对（p1 FAT32 `0x41` 且可启动位 `0x80`，位于 LBA 65536）。
+
+⚠️ **但这块 eMMC 从未成功启动过。** 写完之后第一次上电，SPI 上的 U-Boot 就已经在
+TPL 阶段退出了（见 `docs/BRICK-U-BOOT-DDR.md`）。所以"eMMC 引导可用"这件事
+**至今没有任何真机证据**，只验证到"字节写对了"为止。
+
+⚠️ **eMMC 上原本装着一套完整可用的 Armbian 26.11.0-trunk.62**（内核 6.18.54，
+hostname `rockpi-4b`，1.5 GB，含用户 `rock` 的家目录）。这一点早期文档记错过 ——
+当时只看了启动日志里没有分区名就下结论说"裸分区、内容未知"，没有真去读。
+**那次 `dd` 覆盖掉了它，没有备份。**
 
 ---
 
@@ -668,14 +774,19 @@ gpio-keys   不存在 ✓（按设计删除）
 
 | 原风险项 | 实际情况 |
 |---|---|
-| U-Boot DRAM 拓扑无公开 DTS 可抄 | **不成立**。U-Boot 直接复用内核主线 DTS，无板级 C 驱动 |
+| U-Boot DRAM 拓扑无公开 DTS 可抄 | **判断错了一半**。U-Boot 确实复用内核主线 DTS、也不需要板级 C 驱动 —— 但它还需要一个 `arch/arm/dts/<board>-u-boot.dtsi`，**这个文件不存在、且不报错**。缺的正是 DRAM 参数，代价是一块板。见 [U-Boot 侧](#u-boot-侧曾判断为简单结果是错的) |
 | ES8316 需重新调 I2S/耳麦检测 | **不需要调**。继承上游后全是经硬件验证的值 |
 | RTL8211F RGMII 延时需实测微调 | **不需要**。`tx_delay 0x28` / `rx_delay 0x11` 直接可用，1Gbps 实测通过 |
-| AP6256 固件与 BT LPO 时钟需核对 | BT 的 LPO 时钟 `&rk808 1` 继承上游正确；固件问题见 WiFi 文档 |
+| AP6256 固件与 BT LPO 时钟需核对 | BT 的 LPO 时钟 `&rk808 1` 继承上游正确；固件问题见 WiFi 文档。**另**：WiFi 的 pwrseq 时钟确实要改（`lpo` → `ext_clock`），见 README 顶部 |
 | RK809 电压选择 GPIO | **芯片型号本身就猜错了** —— 是 RK808 |
 
 **教训**：这份清单本身是个信号 —— 列得出这么多"高风险项"，说明方法有问题。正确的做法是
 去继承经硬件验证的描述，而不是自己写然后逐项担心。
+
+但反过来也要认：**"不成立"这个结论下得太早，代价是一块板。** 这一行当时判为不成立，
+依据是"U-Boot 复用主线 DTS"。那句话本身没错，错在把"复用主线 DTS"当成了
+"U-Boot 侧已经没有板级描述要做"。**风险项被消解和风险项被误判，在纸面上长得一模一样**
+——区别只在于有没有去查那个环节本身。
 
 ---
 
@@ -691,22 +802,38 @@ gpio-keys   不存在 ✓（按设计删除）
 - [x] Phase 4：**上机验证通过，系统完整启动**（1Gbps 网口 + eMMC HS400 + USB）
 - [x] Phase 5a：WiFi **硬件层**打通
 - [x] Phase 5b：BCM43456 固件包做好并验证进镜像
-- [ ] Phase 5c：WiFi **固件运行** —— 芯片不肯启动，见 `docs/WIFI-INVESTIGATION.md`
+- [x] Phase 5c：WiFi **固件运行** —— 根因是 pwrseq 时钟名（`lpo` → `ext_clock`），已修
 - [x] Phase 5d：recovery/Maskrom 按键定性，猜的 gpio-keys 已删
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
-- [ ] Phase 6：eMMC 安装验证
+- [ ] Phase 6：eMMC 安装验证 —— **`dd` 已完成且哈希校验一致，但从未成功启动过**
+      （板子在验证之前就因 SPI 的 U-Boot 变砖）
+- [ ] Phase 5g / 新增：**修复后的 U-Boot 上真机复验**，并把 SPI 修好
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）
 
 ---
 
 ## 给下次的提醒
 
-1. **Armbian 下这块板的 WiFi 到底能不能用？** 这是 WiFi 方向**唯一**能区分"软件"和
-   "硬件"的信息，我问过三次都没得到答复。镜像文件还在的话，可以挂载读
-   `/lib/firmware/brcm/` 和它的 DTB 做逐项比对。
-2. **测试 WiFi 必须冷启动**：`poweroff` + 拔电 + 等 10 秒 + 上电。`reboot` 和 reset 键
+1. **"构建成功"不等于"能启动"。** 这次最贵的教训：`rockchip,sdram-params` 缺失时，
+   构建返回 0、`idbloader.img` 正常产出、既有 9 项校验全过。缺陷只在刷进 SPI 后才
+   暴露，那时已经无法自救。**加校验项的标准是"这个缺陷能不能溜过去"**，
+   不是"我改了什么"。
+2. **静默降级比报错危险。** `arch/arm/dts/<board>-u-boot.dtsi` 不存在时，
+   U-Boot 的 `wildcard` 回退到通用文件，不警告、不失败、产物大小正常。
+   去找那些"找不到就用兜底"的地方。
+3. **查位置别只看最明显的那个。** "Armbian 镜像里没有引导程序"这个结论是错的：
+   引导程序在 LBA 0x40（字节 0x8000），我只查了偏移 0。这个错误结论把恢复方向
+   带偏成"必须从外部另找一份引导程序"，差点放弃。
+4. **测试 WiFi 必须冷启动**：`poweroff` + 拔电 + 等 10 秒 + 上电。`reboot` 和 reset 键
    都不算。
-3. **别信没验证过对照组的"证据"**。我在这次排查里用过 `.packageinfo`、未选中的
+5. **别信没验证过对照组的"证据"**。我在这次排查里用过 `.packageinfo`、未选中的
    `cypress-firmware`、`dmesg -C` 后的缓存内容，三个都不是有效信号。
-4. **构建后看校验块**，不要只看 `REAL_EXIT_CODE`。
+6. **构建后看校验块**，不要只看 `REAL_EXIT_CODE`。日志还要看第一行的时间戳 ——
+   有一次 `setsid nohup` 在 `ssh` 里静默失败，校验块读的是上一轮的日志，报了 9 项 OK。
+7. **shell 里注意同名变量。** `sh` 没有局部作用域，函数里用了和顶层同名的计数器会
+   直接覆盖 —— `check-patch-sources.sh` 因此把一次真实的漂移报成"全部匹配"且
+   exit 0，只因为被检查的最后一个文件恰好是匹配的那个。负控制要挑**中间**那个文件做。
+8. **危险路径要能只读地跑一遍。** 管理员门禁会把写盘那段挡在评审之外，于是
+   `write-idbloader-sd.ps1` 里的两个 bug（`-f` 被 `Write-Host` 当参数、未校验扇区对齐）
+   一直没人看见。加 `-Preview` 之后两分钟就暴露了。

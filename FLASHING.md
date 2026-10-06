@@ -523,6 +523,9 @@ maskrom"。而 Radxa **当前**文档对 4A+/4B+ 的描述只提一个 **Maskrom
 
 ## 10. SPI 里的 U-Boot 起不来时怎么救（DRAM 初始化失败）
 
+> 排查过程（含几条走错的岔路）、根因、以及哪些部分已验证/未验证，记在
+> `docs/BRICK-U-BOOT-DDR.md`。本节只讲怎么救。
+
 ### 症状：串口只到 TPL 就停
 
 ```
@@ -588,17 +591,24 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 ```
 
 **Windows 上：** 现成的 Etcher / Rufus 不合适 —— 192 KB 的镜像对几十 GB 的卡会被直接
-拒写。仓库里带了一个只写这一处的脚本：
+拒写。仓库里带了一个只写这一处的脚本。
+
+**第 ① 步不带 `-DiskNumber` 只列盘、什么都不写**，先照着容量和型号确认哪块是 microSD
+（系统盘会被标红）：
 
 ```powershell
-# 以管理员身份打开 PowerShell
-.\scripts\write-idbloader-sd.ps1                 # 先列盘，不带参数不写任何东西
-.\scripts\write-idbloader-sd.ps1 -DiskNumber 2   # 按容量和型号选对卡
+.\scripts\write-idbloader-sd.ps1                    # ① 只列盘
+.\scripts\write-idbloader-sd.ps1 -DiskNumber 2 -Preview   # ② 打印完整计划，仍不写
+.\scripts\write-idbloader-sd.ps1 -DiskNumber 2      # ③ 真写
 ```
 
-它做三件事：**只写 0x8000 处的 192512 字节，0 扇区的 MBR 和分区表完全不动**；
-拒写任何被 Windows 判定为系统盘/启动盘的设备；写完**读回校验 sha256**。
-第二步要手输 `YES` 才继续，没有默认值。
+`-Preview` 会把镜像路径/大小/sha256、目标设备、偏移和落点全部打出来然后停下，
+**不需要管理员权限**。② ③ 的输出除最后一行外完全相同，所以 ② 能确认 ③ 要干的正是
+你以为是的那件事。
+
+脚本做四件事：**只写 0x8000 处的 192512 字节，0 扇区的 MBR 和分区表完全不动**；
+拒写任何被 Windows 判定为系统盘/启动盘的设备；拒写非 512 整数倍的偏移、以及放不下的偏移；
+写完**读回校验 sha256**。③ 要手输 `YES` 才继续，没有默认值。
 
 成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（SD 上没有系统、失败），
 再走到 `mmc0`（eMMC 上的 OpenWrt 镜像），应该能直接进系统。
@@ -606,6 +616,10 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 ⚠️ **这条路没有在真机验证过。** 它赌的是：boot ROM 在 SPI 的 TPL 失败、并且已经
 `Returning to boot ROM...` 交回控制权之后，会继续往下试 SD。那句 `Returning to boot ROM...`
 说明控制权确实交回去了，所以有希望；但"会不会继续试"是未知的。赌输了走路线 B。
+
+> 脚本本身被真卡测出过两个 bug（`-f` 被 `Write-Host` 当成参数、以及未校验扇区对齐），
+> 所以才加了 `-Preview` —— 管理员门禁原本把碰磁盘的那半段挡在后面，导致它无法被执行验证。
+> 详见 `scripts/check-patch-sources.sh` 同批提交的说明。
 
 ### 恢复路线 B：Maskrom 重刷 SPI
 
