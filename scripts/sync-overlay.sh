@@ -48,12 +48,22 @@
 #
 #   overlay/kernel/rk3399-rock-4b-plus.dts        a patch SOURCE, staged to /tmp
 #   overlay/u-boot/rock-4b-plus-rk3399_defconfig  a patch SOURCE, used by hand
+#   overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi a patch SOURCE, used by hand
 #
-# What lands in the tree is a generated patch
-# (target/linux/rockchip/patches-6.12/0001-*.patch, and
-# package/boot/uboot-rockchip/patches/0101-*.patch), so copying a .dts over a
-# .patch would be meaningless. regen-dts-patch.sh performs that generation: after
-# changing the DTS, run it, then check that the regenerated patch applies.
+# What lands in the tree is a generated patch, so copying a .dts over a .patch
+# would be meaningless. regen-dts-patch.sh performs the first of those; the two
+# U-Boot ones are turned into patches by hand.
+#
+# Not syncing a patch source is exactly where drift hides, and on 2026-10-06 it
+# hid for real: the defconfig source was corrected to record that this board does
+# have SPI flash, and the correction was never turned into the patch, so the tree
+# kept asserting the opposite. Nothing failed, and the next build would have
+# compiled the old comment without complaint.
+#
+# So these are not merely left alone here, they are CHECKED against the payload
+# of the patch each one generates -- see check-patch-sources.sh, called below on
+# every run. Editing one of these files now means regenerating its patch, and
+# this reports the disagreement instead of letting the two drift apart quietly.
 
 set -e
 
@@ -170,9 +180,26 @@ if [ "$STAGE_DTS" = 1 ]; then
 		printf 'MISSING      %s\n' "$dts_src"
 		rc=1
 	fi
+fi
+
+# Each patch source against the patch it generates. This runs in both
+# directions and with no direction at all: it is a comparison, not a copy, so
+# there is nothing to choose a direction for.
+if [ -f "$PORT_DIR/scripts/check-patch-sources.sh" ]; then
+	printf '\n'
+	printf 'patch sources against the patches they generate:\n'
+	if sh "$PORT_DIR/scripts/check-patch-sources.sh"; then
+		printf '  all patch sources match their patch payload\n'
+	else
+		printf '  a patch source has been edited without regenerating its patch,\n'
+		printf '  or the patch was edited without updating the source. The tree\n'
+		printf '  still builds either way; the two just no longer say the same\n'
+		printf '  thing. See the list of patch sources at the top of this script.\n'
+		rc=1
+	fi
 else
-	printf 'not checked  overlay/kernel/rk3399-rock-4b-plus.dts  (a patch source; --stage-dts to stage it)\n'
-	printf 'not checked  overlay/u-boot/rock-4b-plus-rk3399_defconfig  (a patch source)\n'
+	printf '\nMISSING      scripts/check-patch-sources.sh (patch sources go unchecked)\n'
+	rc=1
 fi
 
 # A dirty build tree means the tree is mid-edit; reconciling against it is
@@ -196,14 +223,22 @@ case "$rc" in
 			line "reconciled $napply file(s) in the requested direction"
 			line "now re-run with --diff to confirm, and commit whichever repo changed"
 		else
-			line "overlay and build tree agree"
-			line "note: generated patches are outside this script's reach. After editing"
-			line "the DTS, run regen-dts-patch.sh and confirm the patch still applies."
+			line "overlay and build tree agree, and every patch source matches its patch"
+			line "note: the patch payloads are checked, but a patch still has to be"
+			line "regenerated after editing its source. After changing the kernel DTS,"
+			line "run regen-dts-patch.sh; the two U-Boot patches are made by hand."
 		fi
 		;;
 	*)
-		line "differences found -- no files were changed"
-		line "read them with --diff, then pass --from-tree or --from-overlay deliberately"
+		if [ "$napply" -gt 0 ]; then
+			line "reconciled $napply file(s) in the requested direction"
+			line "now re-run with --diff to confirm, and commit whichever repo changed"
+		else
+			line "differences found -- no files were changed"
+			line "read them above, then pass --from-tree or --from-overlay deliberately"
+			line "if the difference is a patch payload, regenerate the patch instead:"
+			line "the source is the authored side and the patch is what gets built"
+		fi
 		;;
 esac
 
