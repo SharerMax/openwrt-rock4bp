@@ -15,11 +15,11 @@ scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/openwrt-rockchip-
 scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/sha256sums .
 ```
 
-校验（**当前构建 `7bd8aebefa`**）：
+校验（**当前构建 `3d57e40`**）：
 
 ```
-e64004a0d5cb353a1046ab3d84e33aee7e344d696c3a42437137fd9ecf564e78  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
-8dbbd2e4c948931ff91ae23bcfa0746c72f9dfbc4d768dd75404d64f75d50fca  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
+c218adcd8556d4cd3a7e87eaabe5f8de496571884b4847b4675f073c2ab33103  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
+bf684c3d6ac4d8e6aab56e6e716d27f0854927b98ffa355935229d8d73cc2a30  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
 ```
 
 **历史校验和**（别搞混，sha256 变了就是不同镜像）：
@@ -223,10 +223,10 @@ U-Boot 加载 FIT 时会打印：
 
 ```
 Description:  ARM64 OpenWrt radxa_rock-4b-plus device tree blob
-Data Size:    63779 Bytes = 62.3 KiB
+Data Size:    63787 Bytes = 62.4 KiB
 ```
 
-`63779` 对应"补上 WiFi/BT override、删掉 gpio-keys"这一版。数值不符说明烧的是旧镜像。
+`63787` 对应"WiFi 供电时钟改名为 ext_clock"这一版。数值不符说明烧的是旧镜像。
 
 ### 进系统后逐项检查
 
@@ -247,22 +247,33 @@ ip link
 ```sh
 dmesg | grep -iE "mmc2|brcmfmac|sdio-pwrseq"
 cat /sys/kernel/debug/gpio | grep -i reset
+ip -br link show wlan0
+iw dev wlan0 scan | grep -c '^BSS '
 ```
 
-期望 `mmc2: new ultra high speed SDR104 SDIO card` 和 `gpio-10 (|reset) out hi`
-（芯片出复位）。`wlan0` **不会出现** —— 但**原因和以前不同了**：
+期望全部通过：
 
-- 早期版本缺 `brcmfmac43456-sdio.bin`，是 non-free 固件缺口。
-- 现在三个固件文件都由 `brcmfmac-firmware-43456-sdio` 装进 `/lib/firmware/brcm/`，
-  驱动**上传固件成功**，芯片却起不来：
-  ```
-  brcmf_sdio_htclk: HT Avail timeout (1000000): clkctl 0x50
-  ```
-  失败发生在**固件上传之后**，所以这不再是"缺文件"，而是芯片/驱动层问题。
+```
+mmc2: new ultra high speed SDR104 SDIO card
+gpio-10 (|reset) out hi                              芯片出复位
+brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4345/9 wl0: ... version 7.84.17.1
+wlan0    UP    08:fb:ea:65:f8:da
+16                                                     扫到的网络数（会变）
+```
 
-排查记录、测试矩阵和已排除项见 `docs/WIFI-INVESTIGATION.md`。这不是移植缺陷 ——
-同样的失败在 Orange Pi 5 Pro、PineBook Pro 上也有报告，而 Radxa 官方的 DTS 和
-驱动映射与我们的完全一致。
+`brcmf_c_preinit_dcmds` 那一行是关键 —— 它出现就说明芯片真的在跑固件并响应驱动。
+
+**`63787` 字节的 dtb 才带 WiFi 修复。** 早期版本 `wlan0` 不出现，两个阶段的原因
+完全不同：
+
+- 缺 `brcmfmac43456-sdio.bin`（non-free 固件缺口）
+- 固件装上了、上传也成功，但芯片起不来：
+  `brcmf_sdio_htclk: HT Avail timeout` —— 根因是 `sdio-pwrseq` 的时钟属性名写成
+  `lpo`，驱动只认 `ext_clock`，导致 32.768 kHz 时钟从未使能。修法见
+  `docs/WIFI-INVESTIGATION.md` §0。
+
+如果 `wlan0` 出现但扫不到网络，那是 regdb / 射频功率 / 信道设置问题，与本移植无关
+（`CONFIG_CFG80211_CRDA_SUPPORT` 在 OpenWrt 内核里未开，属于上游取舍）。
 
 **recovery / Maskrom 按键**
 

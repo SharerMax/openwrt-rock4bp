@@ -41,7 +41,7 @@ ac700b2f8d  rockchip: do not track the .config backup file
 | **eMMC 32G** | ✅ | `mmc0: new HS400 Enhanced strobe MMC card` → `SLD32G 28.9 GiB` |
 | **USB** | ✅ | 2×xHCI(SS) + 2×EHCI + 2×OHCI，U 盘识别为 `sda 7880800` |
 | USB 引导 | ✅ | U-Boot 默认链含 `usb`，零配置 |
-| **WiFi 硬件层** | ✅ | `mmc2: new ultra high speed SDR104 SDIO card`；`gpio-10 (reset) out hi` |
+| **WiFi** | ✅ | `wlan0` UP，`iw dev wlan0 scan` 扫到 16 个网络（2.4G + 5G）。MAC `08:fb:ea:65:f8:da`，与 Armbian 下同一颗芯片一致 |
 | **BT 硬件层** | ✅ | `ff180000.serial: ttyS0 at MMIO 0xff180000` |
 | RK808 PMIC | ✅ | `rk808-regulator` + 2×`fan53555-regulator ... Detected` |
 | RTC | ✅ | `rk808-rtc registered as rtc0` |
@@ -52,11 +52,38 @@ ac700b2f8d  rockchip: do not track the .config backup file
 
 | 项 | 性质 | 恢复成本 |
 |---|---|---|
-| **WiFi 固件运行** | 固件包已做好并验证进镜像，但**芯片不肯跑固件** | 见 `docs/WIFI-INVESTIGATION.md`。同类故障在其它 AP6256 板子上也有，Radxa 自己的 DTS 和驱动映射与我们完全一致 |
 | **HDMI 视频** | 内核 `CONFIG_DRM` 全关 + OpenWrt **无 `kmod-drm-rockchip`** | 新建 1 个 kmod 包，可进上游 |
 | **音频** | 缺 `kmod-sound-soc-es8316` + `kmod-sound-soc-rockchip` | 新建 2 个 kmod 包，工作量最大 |
 
-三者都**不阻塞使用**：SSH/串口 + 1Gbps 网口已可用。
+两者都**不阻塞使用**：SSH/串口 + 1Gbps 网口 + WiFi 均已可用。
+
+### WiFi：根因与修复
+
+之前 WiFi 是划出范围的，**现已解决**。根因是设备树里一个属性名：
+
+```dts
+/* overlay/kernel/rk3399-rock-4b-plus.dts */
+&sdio_pwrseq {
+	clock-names = "ext_clock";   /* 上游 Radxa 写的是 "lpo" */
+};
+```
+
+`mmc-pwrseq-simple` 驱动**只**查 `"ext_clock"`，且所有使用点都用 `!IS_ERR()` 守卫。
+所以继承下来的 `"lpo"` 会让查找返回 `-ENODEV` → 被容忍 → `ERR_PTR` 留在原地 →
+**32.768 kHz 时钟静默地从未使能**，没有任何报错。
+
+那个时钟就是 rk808 index 1 → `clkout2`，RK808 PMIC 的 32.768 kHz 输出，由
+`CLK32KOUT2_EN` 控制，**使能它发生在给卡上电之后、释放复位之前**。BCM43456 在
+没有 32 kHz 参考的情况下会接受 SDIO 固件上传，但 datapath 起不来 —— 正是观察到的
+症状。
+
+关键一步是拿 Armbian 做对照：它在**同一块板**上用同一个 brcmfmac、**逐字节相同**的
+固件/NVRAM/clm_blob 能正常工作，而 live device tree 在 WiFi 供电路径上只差这一个属性。
+在此之前测的 6 组固件/NVRAM 组合全是在测错的变量 —— combo 1 就是 Armbian 用的那份
+文件。
+
+完整记录（含被排除的内核 config、树莓派补丁系列、BT 供电路径，以及跨 DTB 比较
+phandle 编号为何无意义）见 [`docs/WIFI-INVESTIGATION.md`](docs/WIFI-INVESTIGATION.md) §0。
 
 ### 还剩一件事
 
@@ -334,7 +361,9 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  absent from manifest: kmod-r8169
   OK/FAILED  absent from manifest: cypress-firmware-4356-sdio
   OK/FAILED  absent from manifest: brcmfmac-nvram-4356-sdio
-  OK/FAILED  dtb is the current 63779-byte build
+  OK/FAILED  dtb is newer than the patch that builds it
+OK/FAILED  dtb enables the WiFi power-sequence clock (ext_clock, not lpo)
+OK/FAILED  dtb still carries the board model
   OK/FAILED  kernel patch applied without rejects
 ```
 
@@ -431,7 +460,7 @@ backports 配置里 `CPTCFG_BRCMFMAC_USB=y`，所以**任何**用 `kmod-brcmfmac
 [    0.326067] dwmmc_rockchip fe310000.mmc: allocated mmc-pwrseq
 [    0.813709] mmc2: new ultra high speed SDR104 SDIO card at address 0001
 [    0.252633] ff180000.serial: ttyS0 at MMIO 0xff180000      ← BT 的 uart0
-  Data Size:  63779 Bytes                ← dtb 与构建产物一致
+  Data Size:  63787 Bytes                ← dtb 与构建产物一致
 ```
 
 `/sys/kernel/debug/gpio` 里列出的 GPIO 从 11 个降到 10 个，正好是删掉的那个。
@@ -583,18 +612,18 @@ CRC` 就是它）。**不影响启动**。
 当前构建 `a1c0ac7353`，`REAL_EXIT_CODE=0`：
 
 ```
-image-rk3399-rock-4b-plus.dtb              63779 字节
+image-rk3399-rock-4b-plus.dtb              63787 字节
 rock-4b-plus-rk3399-u-boot-rockchip.bin    9644032 字节
 Image（解压后整盘镜像）                   603979776 字节 = 576 MiB
 ```
 
-dtb 演进：`63273`（缺 4 个 override）→ `63956`（补上 WiFi/BT/音频）→ `63779`（删 gpio-keys）。
+dtb 演进：`63273`（缺 4 个 override）→ `63956`（补上 WiFi/BT/音频）→ `63779`（删 gpio-keys）→ `63787`（`lpo` → `ext_clock`）。
 
 镜像 sha256：
 
 ```
-8dbbd2e4c948931ff91ae23bcfa0746c72f9dfbc4d768dd75404d64f75d50fca  squashfs-sysupgrade.img.gz
-e64004a0d5cb353a1046ab3d84e33aee7e344d696c3a42437137fd9ecf564e78  ext4-sysupgrade.img.gz
+bf684c3d6ac4d8e6aab56e6e716d27f0854927b98ffa355935229d8d73cc2a30  squashfs-sysupgrade.img.gz
+c218adcd8556d4cd3a7e87eaabe5f8de496571884b4847b4675f073c2ab33103  ext4-sysupgrade.img.gz
 ```
 
 历史 sha256（变了就是不同镜像）：`6386de591b5f…`（WiFi 修复前）、`06b61b20dceb…`
