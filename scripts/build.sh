@@ -125,6 +125,20 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   check "dtb still carries the board model" \
     "'$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -q \"Radxa ROCK 4B+\""
 
+  # The kernel must be able to see the SPI flash that holds the bootloader.
+  #
+  # rk3399-base.dtsi defines spi1 with correct pinctrl but disabled, and
+  # rk3399-rock-pi-4.dtsi never touches it, so without an explicit node the
+  # flash is invisible: no /dev/mtd0, no dmesg line, nothing. That looks
+  # exactly like "the shorting worked" when you are testing by grepping dmesg,
+  # which is how this gap was found.
+  #
+  # Both halves matter. The child node existing while spi1 stays disabled still
+  # probes to nothing, so check the status inside the spi1 block rather than
+  # grepping only for jedec,spi-nor.
+  check "dtb exposes the SPI flash (spi1 okay, with a jedec,spi-nor child)" \
+    "{ '$DTC' -I dtb -O dts '$DTB' 2>/dev/null | awk '/spi@ff1d0000/,/^\t};/' | grep -q 'status = \"okay\"'; } && '$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -q 'jedec,spi-nor'"
+
   check "kernel patch applied without rejects" \
     "! find build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/arch -name '*.rej' | grep -q ."
 

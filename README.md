@@ -191,7 +191,7 @@ overlay/                                           按 OpenWrt 源码树路径�
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         构建脚本（manifest + 构建后 15 项校验）
+  build.sh                                         构建脚本（manifest + 构建后 16 项校验）
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树（双向需显式指定）
   check-patch-sources.sh                           把三个补丁源和它们生成的补丁逐一比对
@@ -423,7 +423,7 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 15 项校验     ← 不是装饰
+4. 构建后 16 项校验     ← 不是装饰
 ```
 
 （"12 项"是 12 条 `check` 语句，其中一条循环跑 4 次，所以日志里打印 15 行。）
@@ -444,7 +444,7 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会先剥掉残留行并断言它确实
 不存在。
 
-### 构建后校验（15 条 check，日志打印 18 行）
+### 构建后校验（16 条 check，日志打印 19 行）
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：

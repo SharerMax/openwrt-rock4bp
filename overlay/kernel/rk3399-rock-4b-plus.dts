@@ -36,6 +36,10 @@
  *   - V1.6/V1.72 have a 4 MB SPI flash populated, so SPI is left enabled in
  *     U-Boot for booting and for the environment. Later V1.73 boards ship with
  *     the SPI flash unpopulated.
+ *     Note that this says U-Boot specifically. It used to be the whole story,
+ *     and it was worth stating: the kernel had no &spi1 and no flash@0 node at
+ *     all, so the flash that holds the bootloader was invisible to a running
+ *     OpenWrt. See the &spi1 block at the end of this file.
  *   - RAM may be 2 GB or 4 GB; nothing in the device tree needs to change.
  */
 
@@ -167,4 +171,34 @@
 	pinctrl-names = "default";
 	interrupt-parent = <&gpio1>;
 	interrupts = <RK_PA1 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+/*
+ * SPI NOR flash, 4 MB XT25F32B, on spi1.
+ *
+ * rk3399-base.dtsi defines spi1 with the right pinctrl already
+ * (&spi1_clk &spi1_tx &spi1_rx &spi1_cs0) but leaves it disabled, and
+ * rk3399-rock-pi-4.dtsi never touches it -- so without this the kernel has no
+ * /dev/mtd0 and cannot see the flash that holds the bootloader.
+ *
+ * Why that matters beyond curiosity: if the SPI bootloader ever goes bad again,
+ * being able to read and rewrite it from a running system is the difference
+ * between a five-minute fix and a maskrom operation. It is also the only way to
+ * tell, from software, whether the chip is actually populated -- V1.73 boards
+ * ship without it, and their probe fails harmlessly with a log line.
+ *
+ * spi-max-frequency follows this port's U-Boot
+ * (rk3399-rock-pi-4-u-boot.dtsi, 10 MHz) rather than upstream
+ * rk3399-rock-pi-4b.dts's 108 MHz. The chip is a plain SPI NOR on a short
+ * trace; 10 MHz costs nothing here and reads are what this node is for. Change
+ * it only with evidence that a faster clock is needed.
+ */
+&spi1 {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
 };
