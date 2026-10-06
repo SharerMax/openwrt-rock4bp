@@ -578,13 +578,27 @@ e8aaf9319e10a888e727ba5bfb3088a7a0bad3001259bcb085e46ef3c491bd85  idbloader-spi.
 
 ### 恢复路线 A：microSD 卡上放一份好的引导程序（首选，不用拆板）
 
-从 microSD 引导时，引导程序放 **LBA 0x40**，理由见第 7 节：
+从 microSD 引导时，引导程序放 **LBA 0x40**，理由见第 7 节。**只用
+`idbloader.img`**（192512 B，eMMC/SD 变体），**不要**用 `idbloader-spi.img`。
+
+**Linux / 构建机上：**
 
 ```
 dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 ```
 
-用 **`idbloader.img`**（192512 B，eMMC/SD 变体），**不要**用 `idbloader-spi.img`。
+**Windows 上：** 现成的 Etcher / Rufus 不合适 —— 192 KB 的镜像对几十 GB 的卡会被直接
+拒写。仓库里带了一个只写这一处的脚本：
+
+```powershell
+# 以管理员身份打开 PowerShell
+.\scripts\write-idbloader-sd.ps1                 # 先列盘，不带参数不写任何东西
+.\scripts\write-idbloader-sd.ps1 -DiskNumber 2   # 按容量和型号选对卡
+```
+
+它做三件事：**只写 0x8000 处的 192512 字节，0 扇区的 MBR 和分区表完全不动**；
+拒写任何被 Windows 判定为系统盘/启动盘的设备；写完**读回校验 sha256**。
+第二步要手输 `YES` 才继续，没有默认值。
 
 成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（SD 上没有系统、失败），
 再走到 `mmc0`（eMMC 上的 OpenWrt 镜像），应该能直接进系统。
