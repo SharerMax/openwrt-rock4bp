@@ -670,7 +670,28 @@ RK3399 的 HDMI 由 `dw-hdmi-rockchip.ko` + `rockchipdrm.ko` 提供，`dw-hdmi.k
 ```
 
 第 ① 步对这块板**必需** —— 本板贴了 SPI Flash，不短接的话 SPI 的 U-Boot 会先接管。
-好消息是只有进 maskrom 才需要短接，正常 SPI 引导和 `dd` 路线完全不受影响。
+
+✅ **Maskrom 已在真机验证可用**（2026-10-06）：用官方 `rk3399_loader` 加 Armbian 的
+引导程序，把起不来的板子救回了。
+
+⚠️ **但不要把"短接 SPI"当成绕过 SPI 的手段。** 曾推荐过"短接引脚让 boot ROM 跳过
+SPI、去用镜像自带的那份引导程序"，**实测不成立**：
+
+| 现象 | 说明 |
+|---|---|
+| 短接后 `mtd0` 消失 | 短接对 Linux 确实生效 |
+| 串口第一行仍是 `U-Boot TPL 2022.07_armbian` | **boot ROM 照样从 SPI 加载引导程序** |
+| `Loading Environment from SPIFlash` 仍出现 | U-Boot proper 也照样读 SPI |
+
+**SPI 在 boot ROM 里排第一，只要它能被读到就赢**，没有硬件手段绕过。
+
+⚠️ **也不能从运行中的系统读写这块 SPI。** 不是"读不稳定"，是**读到的不是芯片内容**：
+补上 `&spi1` + `flash@0` 后 `mtd0` 出现了、几何信息也对，两次独立读取字节完全相同 ——
+但整个 4 MiB 里没有 rkimage 头、没有 FIT magic、没有 U-Boot banner，而这块芯片上明明
+有能跑的引导程序。**JEDEC ID 这类短事务读对了，批量数据读全错。**
+
+于是备份下来的不是芯片内容，写入也无法验证 —— 而 SPI 是唯一会造成不可逆变砖的介质。
+**要改 SPI 引导程序只有 Maskrom 这一条路。** 详见 `docs/BRICK-U-BOOT-DDR.md`。
 
 实测硬件事实：**按住按键没有任何 GPIO 电平变化**。这与"按键由 boot ROM 在上电瞬间采样"
 一致 —— 如果它同时被 Linux 当输入用，按下就该在 debugfs 里看到变化。Radxa 和主线的
