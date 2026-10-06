@@ -9,6 +9,121 @@ and how to continue.
 
 ---
 
+## 0. The finding that reframes everything below
+
+On 2026-10-06 the machine that had been running Armbian became reachable, and it
+answers the question §8 used to call the decisive one. **WiFi works under Armbian
+on this board.** Not on a similar board, and not with a different driver — on this
+one, with `brcmfmac`.
+
+```c
+/* Armbian, 26.11.0-trunk.62, kernel 6.18.54-current-rockchip64 */
+brcmfmac: brcmf_fw_alloc_request: using brcm/brcmfmac43456-sdio for chip BCM4345/9
+brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4345/9 wl0: Jun 16 2017 12:38:26
+                                   version 7.45.96.2 (66c4e21@sh-git) (r)
+$ ip -br link
+wlan0    UP    08:fb:ea:65:f8:da
+```
+
+So the hardware is not faulty, the module is not dead, and this is not a
+chip-support gap. Everything in this port is right except the kernel.
+
+### The board is the same board
+
+Not inferred from the model string — Armbian's DTB reports `radxa,rockpi4b`, ours
+reports `radxa,rock-4b-plus`, so the model string alone proves nothing. The
+hardware identifiers match instead:
+
+| | Armbian box | Our board |
+|---|---|---|
+| eMMC | `SLD32G 28.9 GiB`, HS400 Enhanced strobe | `SLD32G 28.9 GiB`, HS400 Enhanced strobe |
+| eMMC boot | `mmcblk0boot0 4.00 MiB` | `mmcblk0boot0 4.00 MiB` |
+| SPI flash | `/dev/mtd0` present | `SF: Detected XT25F32B ... total 4 MiB` |
+
+Same eMMC part, same capacity, same boot-partition geometry, and both have the 4 MB
+SPI flash that only the early revision carries.
+
+### The firmware is the same firmware
+
+This is the part that invalidates the test matrix. Every file Armbian loads is
+byte-identical to our combo 1:
+
+| File | sha256 | Size | Our combo 1 |
+|---|---|---|---|
+| `brcmfmac43456-sdio.bin` | `3167956a7b2cffc4…` | 482927 | identical |
+| `brcmfmac43456-sdio.txt` | `66c71eb53b47c49d…` | 2099 | identical |
+| `brcmfmac43456-sdio.clm_blob` | `2dbd7d22fc9af0eb…` | 7163 | identical |
+
+Armbian also ships `brcmfmac43456-sdio.radxa,rockpi4b.{bin,txt}` as symlinks to
+those same files, so it is not resolving a board-specific variant either.
+
+**Combo 1 is the configuration that works on this hardware, and combo 1 fails on
+this port.** Combos 2–6 were therefore testing the wrong variable. That the RPi
+NVRAM gets *further* (see the comparison below) is a difference in how the failure
+looks, not progress toward working: Armbian uses the AP6256 NVRAM and works.
+
+A version note, because two numbers here look contradictory and are not: the
+firmware blob's own embedded string is `Version: 7.45.96.0`, while the running chip
+reports `version 7.45.96.2` to the driver over DCMDS. Those are two different
+things — the build tag in the image, and the version the chip answers with.
+
+### The device tree is the same device tree
+
+Compared node by node, decompiling our shipped dtb and Armbian's live
+`/proc/device-tree` with `dtc`. `mmc@fe310000` and its `wifi@1` child agree on
+every property: `bus-width`, `clock-frequency` (0x2faf080), `max-frequency`
+(0x8f0d180), `cap-sdio-irq`, `cap-sd-highspeed`, `sd-uhs-sdr104`,
+`keep-power-in-suspend`, `fifo-depth`, `clocks`, `resets`, `pinctrl-0`,
+`interrupt-names = "host-wake"`, `compatible = "brcm,bcm4329-fmac"`.
+
+The `mmc-pwrseq` node matches too: both `mmc-pwrseq-simple` with
+`reset-gpios = <0x2a 0x0a 0x01>` and no `post-reset-delay-ms`.
+
+### The driver is nearly the same driver
+
+| | Kernel | brcmfmac source |
+|---|---|---|
+| Ours | 6.12.94 | `openwrt/backports` **6.18.26** |
+| Armbian | 6.18.54-current-rockchip64 | mainline |
+
+Close enough that the driver is an unlikely culprit on its own, which leaves the
+kernel core, the kernel config, and anything else in the tree.
+
+### Ruled out along the way
+
+* **OpenWrt's Raspberry Pi brcmfmac patch series.** OpenWrt applies eight RPi
+  patches to every brcmfmac build (`package/kernel/mac80211/patches/brcm/`).
+  **No patch touches `htclk`, `CHIPCLKCSR`, `ALP`, `alp_only`, `clkctl`,
+  `sdio_probe`, or `download_firmware`** — the failing path. The two that do touch
+  `sdio.c` are innocuous: one adds support for a different chip (BCM43341), the
+  other makes 43456 a CLM-blob entry, which this port needs since it ships one.
+* **`870-02 Prefer a ccode from OTP over nvram file`** rewrites `ccode=` to
+  `#ccode=` *in the loaded NVRAM buffer*, in place, before handing it to the chip.
+  That would be a genuinely dangerous thing to find — but none of the three NVRAM
+  files contain `ccode=`, so the mutation never triggers.
+* **`brcmfmac: F1 signature read`**, which Armbian logs and we never do, is a
+  `pr_debug`. Armbian simply runs with `debug` enabled. Not a behavioural
+  difference.
+
+### What this leaves
+
+The failure is in the OpenWrt kernel, and it is not yet localised. The remaining
+candidates, in the order worth testing:
+
+1. **The 6.12 vs 6.18 delta in the MMC/SDIO core.** Our brcmfmac is backported but
+   `drivers/mmc` is 6.12. The SDIO card enumerates at SDR104 on both, so the bus
+   works; what may differ is the sequencing around function-1 register access.
+2. **Kernel config.** Untested, and cheap to compare against Armbian's
+   `/boot/config-*`.
+3. **Reset-to-probe timing.** The chip uploads firmware and then never asserts
+   HT_AVAIL. A longer `post-reset-delay-ms` on the `mmc-pwrseq` node is a one-line
+   DTS change that directly targets the symptom, and neither DT sets the property
+   today.
+
+Items 2 and 3 are both cheap enough to do before anything more elaborate.
+
+---
+
 ## 1. What the module is
 
 | Property | Value | Source |
@@ -349,34 +464,32 @@ leaves no distinguishing trace. That has to come from the operator.
 
 ## 8. Open questions, in priority order
 
-1. **Repeat combos 2 and 3 once more.** Two consistent samples each is thin, and
-   the PineBook Pro owner reports a full power cycle only works about 80% of the
-   time — so run-to-run variance is real and a single differing boot could
-   overturn the NVRAM conclusion. This is cheap and it guards the one result the
-   investigation currently rests on.
-2. **Which NVRAM key or keys actually matter?** Now testable, because the NVRAM is
-   demonstrably a lever. Bisect from the working side: start from RPi's file and
-   revert one group at a time toward AP6256's. The Bluetooth coexistence block is
-   the first candidate — the AP6256 file has no `btc_mode` and no `btc_params*` at
-   all, while RPi's carries parameters credited to Cypress, the module's own
-   vendor, and this module's Bluetooth die shares the chip and rides `uart0`.
-   Alternatively synthesise a hybrid: AP6256's board-correct values plus RPi's
-   coexistence block. Neither file alone is right for this board.
-3. **Has WiFi ever worked on this board under Armbian?** Still unanswered, and it
-   remains the only thing that separates "software" from "hardware". If it worked,
-   an Armbian image can be mounted and its `/lib/firmware/brcm/` compared line by
-   line — including its NVRAM, which is now known to matter. If it never worked,
-   stop tuning software.
-4. Is there a power or timing condition not yet configured? The WiFi node declares
-   no `*-supply`, matching upstream. The chip may need more settle time after
-   reset deassertion than the pwrseq default of 200 ms. Note that combo 2 does get
-   the chip running, which argues against a gross power problem.
-5. Is the module itself faulty (soldering, antenna path)? With the NVRAM now known
-   to change the failure point, a hardware fault seems less likely than it did —
-   a marginal chip would not respond that predictably to a configuration file.
+The Armbian comparison (§0) answered the old question 3 — WiFi does work on this
+board, so this is a kernel problem, not hardware — and invalidated combos 2 through
+6 as tests of the wrong variable. What remains:
 
-Combo 5 is now low value: RPi's 43455 NVRAM differs from its 43456 NVRAM only in PA
-calibration values and `btc_params50`, so it should land where combo 2 landed.
+1. **Diff the kernel config** against Armbian's `/boot/config-6.18.54-*`, focused on
+   MMC, SDIO, CRDA and clock options. Cheapest thing left, and it has never been
+   done.
+2. **Try a longer `post-reset-delay-ms`** on the `mmc-pwrseq-simple` node. The
+   chip accepts firmware and then never asserts HT_AVAIL, which is what a chip that
+   is not ready yet looks like. Neither DT sets this property today, so it is a
+   genuinely untried value rather than a change to a tuned one. One line of DTS.
+3. **Look at the 6.12 → 6.18 delta in `drivers/mmc`** — the SDIO core, not brcmfmac.
+   Function-1 register access is where the attach times out.
+4. Only if 1–3 fail: bisect by booting a newer kernel base, which is a large change
+   to an otherwise working port and should not be attempted while cheaper options
+   remain.
+
+**Do not resume the firmware/NVRAM matrix.** Combo 1 is byte-for-byte the
+configuration that works on this hardware and it fails here, so combinations of
+those same files cannot produce a working result. The NVRAM difference in §4 is a
+real observation about how far the chip gets, but both paths end in failure, and
+the one that gets further is not closer to working.
+
+Combos 4 and 6 remain untested and are now pointless: 4 pairs the 7.45.96.0
+firmware with the RPi NVRAM, and 6 pairs the 43455 firmware with the AP6256 NVRAM.
+Both draw from the same exhausted set.
 
 ## 9. How to continue
 
