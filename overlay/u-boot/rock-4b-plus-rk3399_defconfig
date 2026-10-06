@@ -12,11 +12,15 @@
 # ROCK 4B+ (V1.73) specific hardware notes:
 #   - Ethernet PHY is RTL8211F (V1.72 changed it from RTL8211E). CONFIG_PHY_REALTEK
 #     covers both; Radxa states no software change is required.
-#   - NO SPI flash is populated on V1.73 (boards built after 2022-08-05). Boot is
-#     therefore eMMC/SD only. The CONFIG_SPL_SPI_* / CONFIG_SPI_FLASH_* options
-#     inherited from the 4SE baseline are unused capabilities; they can be dropped
-#     once the board boots. They are intentionally left in place for now so the
-#     first build stays a minimal diff from a known-good configuration.
+#   - SPI flash: V1.73 boards built after 2022-08-05 ship without it, so on those
+#     the boot medium is eMMC/SD. Earlier V1.73 boards -- including the one this
+#     port was developed on -- do carry a 4 MB NOR (XT25F32B) that holds the
+#     bootloader, and the RK3399 BootROM tries SPI before eMMC and SD. The
+#     CONFIG_SPL_SPI_* / CONFIG_SPI_FLASH_* options inherited from the 4SE
+#     baseline are therefore load-bearing on such boards, not unused capability,
+#     and are kept in place so one defconfig covers both variants.
+#     Note the corollary for recovery: a broken SPI bootloader is not bypassed by
+#     a good eMMC or SD one, because SPI is tried first.
 #   - USB-C PD/QC trigger is CH224D (was added in V1.72).
 #
 # Boot flow: idbloader.img at LBA 0x40, u-boot.itb at LBA 0x4000.

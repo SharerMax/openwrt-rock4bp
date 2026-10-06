@@ -327,31 +327,103 @@ gpio-keys 节点，`/sys/kernel/debug/gpio | grep -i recovery` 应无输出。
 U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，
 `mmc0` 就是 eMMC，排在 USB 之前。**写完直接插电就能起，不用改 U-Boot 环境变量。**
 
+> **引导程序在 eMMC/SD 上的位置是 LBA 0x40，不是 LBA 0。** RK3399 的 boot ROM 在
+> `0x40` 扇区（字节 0x8000）找 idbloader，这和 `defconfig` 头部注释里那句
+> *"Boot flow: idbloader.img at LBA 0x40, u-boot.itb at LBA 0x4000"* 是一致的。
+>
+> 判据：Armbian 的镜像从字节 0x8000 开始出现高熵数据，其头 8 字节
+> `3b 8c dc fc be 9f 9d 51` 与本移植产出的 `idbloader.img` 头 8 字节完全相同。
+> 本镜像在 0x40 处是空的，这是有意的 —— 引导链在 SPI 上，见第 10 节。
+>
+> ⚠️ 查这一段时容易踩坑：**只看偏移 0 会误判成「Armbian 镜像里根本没有引导程序」**。
+> 偏移 0 确实只有 MBR 和零，引导程序在 0x8000。这个错误结论一度把恢复方向
+> 带偏成「必须从外部重新获取一份引导程序」。
+
 ⚠️ **从 U 盘启动时不要用 `sysupgrade`**。此时 root 在 `/dev/sda2`，
 sysupgrade 会把 U 盘当成升级目标，等于覆盖你自己的启动盘。走手工 `dd`。
 
-⚠️ **eMMC 上已经有东西了。** 上机日志里只出现一个裸分区 `mmcblk0: p1`
-（没有大小也没有名字），U-Boot 跳过它直接走了 USB —— 现有布局不是 OpenWrt
-认识的。`dd` 会覆盖 MBR 和 p1/p2，**不可逆**。先只读地看清：
+⚠️ **eMMC 上原本装着一套完整可用的 Armbian。** 本文档早期版本把它描述成"一个裸
+分区 `mmcblk0: p1`，没有大小也没有名字，内容未知" —— **那是错的**，当时的结论来自
+启动日志里没有分区名，而没有实际去读。只读挂载一看就清楚了：
+
+```
+$ mount -o ro /dev/mmcblk0p1 /mnt/emmc && ls /mnt/emmc
+PRETTY_NAME="Armbian_community 26.11.0-trunk.62 trixie"   (etc/os-release)
+$ ls /mnt/emmc/boot/
+vmlinuz-6.18.54-current-rockchip64   initrd.img-6.18.54-current-rockchip64
+armbianEnv.txt   boot.cmd   boot.scr   dtb-6.18.54-current-rockchip64
+$ cat /mnt/emmc/etc/hostname
+rockpi-4b
+$ ls /mnt/emmc/home/
+rock                                    ← 有用户数据
+$ du -sh /mnt/emmc
+1.5G
+```
+
+`dd` 会覆盖 MBR 和 p1/p2，**不可逆**，这套 Armbian 和 `/home/rock` 会永久消失。
+2026-10-06 执行时是在明确告知后选择直接覆盖的。
+
+**先只读地看清，再决定：**
 
 ```sh
-fdisk -l /dev/mmcblk0
-blkid /dev/mmcblk0p1
-mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc && ls -la /mnt/emmc
+mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc
+ls -la /mnt/emmc
+cat /mnt/emmc/etc/os-release 2>/dev/null | head -3
+ls -la /mnt/emmc/boot/ /mnt/emmc/home/ 2>/dev/null
+du -sh /mnt/emmc
+umount /mnt/emmc
 ```
+
+**备份放哪里也要先算清楚**：U 盘 sda2 只有约 466 MB 可用，装不下 1.5 GB 的
+rootfs。构建机有 20 GB，可以直接通过网络拉：
+
+```sh
+# 在构建机上执行
+ssh root@<board> "tar -C /mnt/emmc -czf - ." > armbian-emmc-backup.tar.gz
+```
+
+**判断当前引导源**，避免把运行中的系统覆盖掉：
+
+```sh
+sed 's/.*root=//;s/ .*//' /proc/cmdline      # root= 指向哪块盘
+cat /proc/partitions | grep -E 'mmcblk0|sda'
+```
+
+只有当 `root=` **不**指向 `mmcblk0` 时才安全。写之前还要断言：目标是整盘而非分区、
+不是 `mmcblk0boot0/boot1/rpmb`、且未被挂载。
 
 确认可以覆盖后：
 
 ```sh
-# U 盘的 sda1 已经挂在 /boot，把镜像拷进去
-cp <img.gz> /boot/
+# 把镜像传到板子上，并在板上校验哈希 —— 传错了 dd 出去的就是垃圾
+scp openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz root@<board>:/root/emmc.img.gz
+ssh root@<board> sha256sum /root/emmc.img.gz      # 与构建机 sha256sums 比对
 
-gzip -dc /boot/openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz \
-  | dd of=/dev/mmcblk0 bs=4M conv=fsync status=progress
-
-sync
-poweroff
+ssh root@<board> 'gzip -dc /root/emmc.img.gz | dd of=/dev/mmcblk0 bs=4M conv=fsync; sync'
 ```
+
+**写完必须读回验证**，不要只看 `dd` 的退出码：
+
+```sh
+ssh root@<board> '
+  echo -n "image : "; gzip -dc /root/emmc.img.gz | sha256sum | cut -d" " -f1
+  echo -n "device: "; dd if=/dev/mmcblk0 bs=1M count=576 2>/dev/null | sha256sum | cut -d" " -f1
+'
+```
+
+两个 sha256 必须一致。2026-10-06 实测一致：
+`5847c6118853b40a66587c220e484c50b19103e2df72e10a1f1ccd7a77ff760f`
+
+写完的 MBR 应当是（实测）：
+
+| 分区 | 类型 | 起始 LBA | 大小 |
+|---|---|---|---|
+| p1 | `0x41` FAT32，可启动标志 `0x80` | 65536 | 32768 扇区 = 16 MiB |
+| p2 | `0x83` Linux | 131072 | 1048576 扇区 = 512 MiB |
+
+**注意 p1 是 FAT32 文件系统，不是裸 FIT。** U-Boot 通过 FAT 读里面的
+`kernel.itb`，所以在分区起始处找 FIT 魔数 `d00dfeed` 会返回 0，那是正常的，
+不代表写坏了 —— 判断依据是上表的分区表和整体 sha256。
 
 **为什么 dd 是安全的**：镜像本身就是 576 MiB 的完整整盘镜像（p2 末尾扇区
 1179647 已到镜像边界），`dd` 写完布局就对了。ARM mbr 设备的 sysupgrade 内部
@@ -359,6 +431,20 @@ poweroff
 
 **不要写 `/dev/mmcblk0boot0` / `boot1` / `rpmb`**：那是 eMMC 的 boot 分区，
 Rockchip 的 U-Boot TPL 不从那里读，动了反而可能出问题。
+
+**不要用 `sysupgrade` 装到 eMMC**：从 U 盘启动时 root 在 `/dev/sda2`，sysupgrade
+会把 U 盘当成升级目标。
+
+## 装完如何确认真的从 eMMC 引导
+
+U 盘插着也能启动（`BOOT_TARGETS` 里 `mmc0` 排在 `usb` 前面），所以**要验证就必须
+先拔掉 U 盘**，否则无法区分引导源：
+
+```sh
+# 断电、拔掉 U 盘、上电，然后：
+sed 's/.*root=//;s/ .*//' /proc/cmdline     # 不再是 PARTUUID=...-02
+cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
+```
 
 如果 dd 完起不来，回退方式：插 U 盘。U-Boot 的 boot 链会自动往后走到 `usb`
 （tty4/tty5 日志已经两次证明这条路走得通）。
@@ -432,3 +518,91 @@ maskrom"。而 Radxa **当前**文档对 4A+/4B+ 的描述只提一个 **Maskrom
 （见 README"recovery 按键"小节），这与"按键由 boot ROM 在上电瞬间采样"一致 ——
 如果它同时被 Linux 当输入用，按下就应该能在 debugfs 里看到变化。
 另外 4B+ 没有独立的 recovery 功能键：maskrom 本身就是 Rockchip 的恢复入口。
+
+---
+
+## 10. SPI 里的 U-Boot 起不来时怎么救（DRAM 初始化失败）
+
+### 症状：串口只到 TPL 就停
+
+```
+U-Boot TPL 2025.10-OpenWrt-r33051-f5dae5ece4 (Jun 29 2026 - 12:59:20)
+rk3399_dmc_of_to_plat: Cannot read rockchip,sdram-params -1
+DRAM init failed: -1
+Trying to boot from BOOTROM
+Returning to boot ROM...
+```
+
+没有 SPL banner，没有 U-Boot banner，之后再无输出。
+
+### 为什么换成 U 盘或 eMMC 都没用
+
+RK3399 的启动顺序是 **SPI Flash → eMMC → SD**，SPI 在最前面。
+**SPI 里只要有一个坏掉的 U-Boot，后面介质上的系统再好也轮不到。**
+
+### 根因：U-Boot 的板级设备树缺 DRAM 参数
+
+U-Boot 会按板名去找 `arch/arm/dts/<board>-u-boot.dtsi`。本板原来**没有**这个文件，
+于是回退到通用的 `rk3399-u-boot.dtsi` —— 它不包含 `rockchip,sdram-params`，
+TPL 拿不到 DRAM 参数就直接退出，连 SPL 都进不去。
+
+**构建过程完全没有提示**：`idbloader.img` 正常产出、大小也正常，
+只有把它刷进 SPI 之后才发现板子起不来 —— 而且到那时已经没法往 SPI 写东西了。
+
+> 同一个坑还有第二层。`scripts/Makefile.lib` 里那个 `wildcard` 是**优先级链、只取第一个命中**：
+>
+> ```
+> u_boot_dtsi_options = $(strip $(wildcard <board>-u-boot.dtsi) $(wildcard $(CONFIG_SYS_SOC)-u-boot.dtsi) ...)
+> # We use the first match to be included
+> dtsi_include_list  = $(notdir $(firstword $(u_boot_dtsi_options)))
+> ```
+>
+> 所以补上 `<board>-u-boot.dtsi` 之后，通用那份会被**顶掉**而不是叠加，
+> 必须在这个文件里自己 `#include "rk3399-u-boot.dtsi"`，否则构建会停在
+> `binman: Device tree './u-boot.dtb' does not have a 'binman' node`。
+>
+> 修复：`package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch`
+> （源文件 `overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi`）。
+> `scripts/build.sh` 里加了 4 条断言盯住这两件事。
+
+### 修复后的产物
+
+```
+b8fa872f46d2654201c036b8a6d6d7276be786cb15cbecd5f86cb5faedf488bf  idbloader.img        192512 B
+e8aaf9319e10a888e727ba5bfb3088a7a0bad3001259bcb085e46ef3c491bd85  idbloader-spi.img   385024 B
+```
+
+`rockchip,sdram-params` 现在在编译出的 `u-boot.dtb` 里（1530 个 u32），`binman` 节点也在。
+两次独立构建的产物 sha256 完全一致。修复前的对比：`idbloader.img` 180224 B → 192512 B，
+`idbloader.img` 里 `rockchip,sdram-params` 从 0 处变成 1 处。
+
+### 恢复路线 A：microSD 卡上放一份好的引导程序（首选，不用拆板）
+
+从 microSD 引导时，引导程序放 **LBA 0x40**，理由见第 7 节：
+
+```
+dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
+```
+
+用 **`idbloader.img`**（192512 B，eMMC/SD 变体），**不要**用 `idbloader-spi.img`。
+
+成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（SD 上没有系统、失败），
+再走到 `mmc0`（eMMC 上的 OpenWrt 镜像），应该能直接进系统。
+
+⚠️ **这条路没有在真机验证过。** 它赌的是：boot ROM 在 SPI 的 TPL 失败、并且已经
+`Returning to boot ROM...` 交回控制权之后，会继续往下试 SD。那句 `Returning to boot ROM...`
+说明控制权确实交回去了，所以有希望；但"会不会继续试"是未知的。赌输了走路线 B。
+
+### 恢复路线 B：Maskrom 重刷 SPI
+
+见第 7 节"最后一层兜底：Maskrom 模式"。**本板必须先把 SPI Flash 引脚短接到 GND**，
+否则 SPI 里的 U-Boot 会抢先接管，拿不到 maskrom。
+
+要写进 SPI 的是 **`idbloader-spi.img`**（385024 B，和 eMMC/SD 那份大小不同，不要混用）。
+具体写入偏移按 `rkdeveloptool` / RKDevTool 的 SPI 布局，照 Radxa 官方文档来。
+**这一步同样没有在真机验证过。**
+
+### 进了系统之后，第一件事是把 SPI 修好
+
+SD 卡只是拐杖。只要 SPI 里还是那份坏的引导程序，每次上电都会先撞上它。
+从系统里写 SPI 时**务必确认写的是 SPI 变体**，写错变体就是再变一次砖。

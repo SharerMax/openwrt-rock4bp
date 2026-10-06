@@ -121,6 +121,39 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
 
   check "kernel patch applied without rejects" \
     "! find build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/arch -name '*.rej' | grep -q ."
+
+  # The U-Boot/SPL device tree is checked the same way, and for a harsher reason:
+  # two separate defects in it cost a working board.
+  #
+  # rockchip,sdram-params absent -- the TPL cannot initialise DRAM at all. The
+  #     build is silent and idbloader.img looks normal, so this only surfaces
+  #     once the bootloader reaches the SPI:
+  #       rk3399_dmc_of_to_plat: Cannot read rockchip,sdram-params -1
+  #       DRAM init failed: -1
+  #
+  # binman node absent -- the build stops, which is at least loud, but for a
+  #     non-obvious reason. scripts/Makefile.lib uses only the FIRST wildcard
+  #     match for <board>-u-boot.dtsi, so creating that file displaces the
+  #     generic $(CONFIG_SYS_SOC)-u-boot.dtsi rather than adding to it. Any
+  #     board -u-boot.dtsi must therefore re-include rk3399-u-boot.dtsi itself.
+  #
+  # Content checks on the compiled .dtb, for the same reason the kernel ones are:
+  # neither defect shows up in a file listing or a size.
+  UB=build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10
+  UB_PATCH=package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch
+  UBDTC=$UB/scripts/dtc/dtc
+
+  check "u-boot dtb is newer than the patch that builds it" \
+    "[ -f '$UB/u-boot.dtb' ] && [ '$UB/u-boot.dtb' -nt '$UB_PATCH' ]"
+
+  check "u-boot dtb carries the RK3399 DRAM parameters (rockchip,sdram-params)" \
+    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | grep -q sdram-params"
+
+  check "u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)" \
+    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | grep -qE '^[[:space:]]*binman[[:space:]]*\\{'"
+
+  check "both idbloader variants built" \
+    "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
 } >> "$LOG" 2>&1
 
 # Make the log's own freshness visible. A reader who finds an old log must not be
