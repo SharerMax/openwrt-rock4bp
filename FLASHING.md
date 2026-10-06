@@ -49,6 +49,15 @@ e64004a0d5cb353a1046ab3d84e33aee7e344d696c3a42437137fd9ecf564e78  openwrt-rockch
 **第一次建议烧 squashfs**（只读、损坏面小、启动快、便于反复重刷）。
 ext4 版本适合后续要持久化数据或装大量包时再用。
 
+> **实际用的是 ext4，不是 squashfs。** 2026-10-06 上机验证的是 **ext4** 镜像
+> （`e64004a0…`，177 个包）。两个镜像共用同一份 manifest，所以包集合相同
+> （`brcmfmac-firmware-43456-sdio - 7.84.17.1-r2`），WiFi 行为不受影响 ——
+> 但**squashfs 镜像至今未在真机上启动过**，要验证的话还得单独刷一次。
+>
+> 对 WiFi 排查而言 ext4 其实更合适：根文件系统可写，固件文件原生持久化，
+> 不必再靠 overlay 那一层。`scripts/deploy.sh` 默认找的是 squashfs 镜像，
+> 烧 ext4 需要手动指定文件名。
+
 > ⚠️ **别再用那块 SD 卡**。第一次烧 SD 卡时出现 `I/O error ... sector 135842`
 > 加 `SQUASHFS error -5`，rootfs 读不了；换 U 盘烧**同一镜像**一次启动成功 ——
 > 是那张卡的问题，不是镜像的问题。
@@ -81,12 +90,16 @@ ext4 版本适合后续要持久化数据或装大量包时再用。
 
 ```bash
 ssh hyv-ub24
-/home/max/Code/rockpi4bp/scripts/deploy.sh --list      # 先看有哪些设备
-/home/max/Code/rockpi4bp/scripts/deploy.sh --verify    # 只校验镜像，不写任何设备
-sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX
+/home/max/Code/rockpi4bp/scripts/deploy.sh --list          # 先看有哪些设备
+/home/max/Code/rockpi4bp/scripts/deploy.sh --verify        # 只校验镜像，不写任何设备
+sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX           # squashfs（默认）
+sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX ext4      # 可写根
 ```
 
 `--list` 会打印所有块设备、容量、型号、挂载点。**这一步别跳过** —— 它是防止写错盘的关键。
+
+第二个参数选镜像变体：`squashfs`（默认）或 `ext4`。两者共用同一份 manifest，包集合相同，
+区别只在根文件系统类型。
 
 脚本会：
 - 先用 `sha256sums` 校验镜像（不用 `gzip -t`，原因见 §1）

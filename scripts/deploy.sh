@@ -4,9 +4,14 @@
 # Run this ON THE BUILD HOST, from the port repo:
 #
 #     /home/max/Code/rockpi4bp/scripts/deploy.sh --verify
+#     /home/max/Code/rockpi4bp/scripts/deploy.sh --verify ext4
 #     /home/max/Code/rockpi4bp/scripts/deploy.sh --list
 #     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdb
+#     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdb ext4
 #     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/mmcblk0
+#
+# A second argument selects the image variant: squashfs (default) or ext4. Both
+# carry the same package set, so this only changes the root filesystem type.
 #
 # --verify checks the image against sha256sums and touches no device.
 # --list prints the candidate targets with their contents and stops. Do that
@@ -50,9 +55,22 @@ say()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Both variants share one manifest, so both carry the same package set. Default to
+# squashfs for a first flash (read-only, small blast radius, fast). Pass "ext4" as
+# a second argument for the writable rootfs, which is what the WiFi work wants:
+# the firmware files then persist natively instead of via the overlay.
+VARIANT="${2:-squashfs}"
+case "$VARIANT" in
+	squashfs|ext4) : ;;
+	*) die "unknown variant '$VARIANT' -- use squashfs or ext4" ;;
+esac
+
 IMG_GZ="$(find "$OPENWRT_DIR/bin/targets/rockchip/armv8" \
-             -name '*radxa_rock-4b-plus-squashfs-sysupgrade.img.gz' -print -quit 2>/dev/null || true)"
-[ -n "$IMG_GZ" ] || die "no squashfs image under $OPENWRT_DIR/bin/targets/rockchip/armv8 -- build first (scripts/build.sh)"
+             -name "*radxa_rock-4b-plus-${VARIANT}-sysupgrade.img.gz" -print -quit 2>/dev/null || true)"
+if [ -z "$IMG_GZ" ] && [ "$VARIANT" = squashfs ]; then
+	die "no squashfs image under $OPENWRT_DIR/bin/targets/rockchip/armv8 -- build first (scripts/build.sh)"
+fi
+[ -n "$IMG_GZ" ] || die "no ${VARIANT} image under $OPENWRT_DIR/bin/targets/rockchip/armv8 -- build first (scripts/build.sh)"
 
 IMG_DIR="$(dirname "$IMG_GZ")"
 TMP_IMG=""
