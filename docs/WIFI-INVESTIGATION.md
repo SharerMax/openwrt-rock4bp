@@ -94,17 +94,72 @@ Every row needs its own **cold boot**. See the methodology traps in §6.
 |---|---|---|---|---|
 | 1 | 7.45.96.0 | AP6256 | cold | `HT Avail timeout` |
 | 2 | 7.84.17.1 | RPi | warm | `phy0` registered, then `attach -110` |
+| 2 | 7.84.17.1 | RPi | **cold, 2026-10-06** | **`phy0` registered, then `attach -110`** — identical to the warm result |
 | 3 | 7.84.17.1 | AP6256 | cold | `HT Avail timeout` |
-| 3 | 7.84.17.1 | AP6256 | cold, re-run 2026-10-06 | `HT Avail timeout` — **reproduced**, operator confirmed power was removed |
+| 3 | 7.84.17.1 | AP6256 | cold, re-run 2026-10-06 | `HT Avail timeout` — **reproduced** |
 | 4 | 7.45.96.0 | RPi | — | **never actually tested**, see §6 |
 | 5 | 7.84.17.1 | RPi 43455 | — | not tested |
 | 6 | 7.45.69.0 (43455 fw) | AP6256 | — | not tested |
 
-**Combo 2 has never been tested cold.** It is the only combination that ever got
-past firmware upload — it registered a wiphy — but that was a warm result, and §6
-explains why warm and cold cannot be compared. It also differs from combo 3 by
-*only* the NVRAM file, which makes it a clean single-variable test. As of
-2026-10-06 it is staged on the board awaiting a power cycle.
+### The one controlled comparison in this investigation
+
+Combos 2 and 3 differ by **exactly one file** — the NVRAM — and both have now been
+booted cold:
+
+```
+combo 3, AP6256 NVRAM:            combo 2, RPi NVRAM:
+  brcmf_fw_alloc_request ...        brcmf_fw_alloc_request ...
+  HT Avail timeout  (clkctl 0x50)   brcmf_sdio_bus_rxctl: resumed on timeout
+  HT Avail timeout  (clkctl 0x50)   ieee80211 phy0: brcmf_bus_started: failed: -110
+                                    ieee80211 phy0: brcmf_attach: -110
+```
+
+Same firmware blob, same clm_blob, same board, both power-cycled. The failure point
+**moves**, so the NVRAM contents are a real input to how far the chip gets.
+
+This also settles a question that had been open since §6: combo 2's warm result was
+not an artefact of the warm state. Cold reproduces it exactly. The "warm and cold
+are incomparable" caution was correct as a rule, and applying it here shows the warm
+result was genuine.
+
+Two samples each, and consistent. Not many, given the PineBook Pro owner's report
+that a full power cycle only works "80% of the time" — so variance exists and these
+should be repeated before being treated as settled. See §8.
+
+### What the NVRAM difference actually is
+
+Full diff of the two files. Grouped by what the key plausibly controls:
+
+| Group | AP6256 (chip never starts) | RPi (chip starts, then stalls) |
+|---|---|---|
+| **Bluetooth coexistence** | **absent entirely** | `btc_mode=1`, `btc_params1=0x7530`, `btc_params8=0x4e20`, commented *"Improved Bluetooth coexistence parameters from Cypress"* |
+| `boardflags3` | `0x48200100` | `0x44200100` (differ by `0x0C000000`, bits 26–27) |
+| `swctrlmap_2g` / `_5g` | non-zero entries | mostly zero; last field `0x3ff`/`0x3fe` vs `0x1ff`/`0x2f4` |
+| `tworangetssi2g` / `5g` | `0` | `1` |
+| PA calibration | `-164,5427…` / `-127,5380…` | `-170,5896…` / `-150,5547…` |
+| `pdoffset40ma0` / `80ma0` | `0xaaaa` ("don't care") | `0x8888` |
+| `macaddr` | `00:90:4c:c5:12:38` | `b8:27:eb:74:f2:6c` |
+| present only in AP6256 | `muxenab=0x10`, `pacalshift5g=0,0,3`, `cckbw202gpo`, `cckdigfilttype=5` | — |
+| present only in RPi | — | `ldo1=4`, `rawtempsense=0x1ff`, `cckPwrIdxCorr`, `fdsslevel_ch11=6` |
+| identical | `boardtype=0x6e4`, `boardrev=0x1304`, `xtalfreq=37400`, `boardflags=0x00480201`, `rxchain/txchain=1`, `itrsw=1`, `femctrl=0`, `AvVmid_c0` | same |
+
+The board-identifying values are the same in both, so this is not a case of one file
+describing a different board. The standout is the **Bluetooth coexistence block**:
+the AP6256 file has no `btc_mode` and no `btc_params*` at all, while RPi's carries
+parameters explicitly attributed to Cypress — the AP6256's own vendor. This module
+also carries a BCM4345C5 Bluetooth die on `uart0`, and the DTS enables that node, so
+the chip's firmware is being asked to bring up BT and WLAN together with no
+coexistence configuration to do it with.
+
+That is a hypothesis, not a finding. It is the most interesting thing in the table
+and it is testable, but "absent coexistence parameters" is an inference from reading
+the file, not something the logs show.
+
+Also worth noting: RPi's NVRAM describes a Raspberry Pi's RF layout, so it gets the
+chip *started* on a board it was not written for. That is consistent with the second
+failure — the chip runs, then function-1 register access times out — and it means
+neither existing file is simply correct for this board. A working configuration
+probably has to be synthesised rather than found.
 
 ### The board's software environment
 
@@ -286,16 +341,34 @@ leaves no distinguishing trace. That has to come from the operator.
 
 ## 8. Open questions, in priority order
 
-1. **Has WiFi ever worked on this board under Armbian?** Unanswered after three
-   attempts, and it is the only thing that separates "software" from "hardware".
-   If it worked, an Armbian image can be mounted and its `/lib/firmware/brcm/` and
-   DTB compared line by line. If it never worked, stop tuning software.
-2. Does the BCM43455 firmware (combo 6) change anything? Cheap to test, low prior.
-3. Is there a power or timing condition not yet configured? The WiFi node declares
+1. **Repeat combos 2 and 3 once more.** Two consistent samples each is thin, and
+   the PineBook Pro owner reports a full power cycle only works about 80% of the
+   time — so run-to-run variance is real and a single differing boot could
+   overturn the NVRAM conclusion. This is cheap and it guards the one result the
+   investigation currently rests on.
+2. **Which NVRAM key or keys actually matter?** Now testable, because the NVRAM is
+   demonstrably a lever. Bisect from the working side: start from RPi's file and
+   revert one group at a time toward AP6256's. The Bluetooth coexistence block is
+   the first candidate — the AP6256 file has no `btc_mode` and no `btc_params*` at
+   all, while RPi's carries parameters credited to Cypress, the module's own
+   vendor, and this module's Bluetooth die shares the chip and rides `uart0`.
+   Alternatively synthesise a hybrid: AP6256's board-correct values plus RPi's
+   coexistence block. Neither file alone is right for this board.
+3. **Has WiFi ever worked on this board under Armbian?** Still unanswered, and it
+   remains the only thing that separates "software" from "hardware". If it worked,
+   an Armbian image can be mounted and its `/lib/firmware/brcm/` compared line by
+   line — including its NVRAM, which is now known to matter. If it never worked,
+   stop tuning software.
+4. Is there a power or timing condition not yet configured? The WiFi node declares
    no `*-supply`, matching upstream. The chip may need more settle time after
-   reset deassertion than the pwrseq default of 200 ms.
-4. Is the module itself faulty (soldering, antenna path)? Nothing in software
-   distinguishes this from a subtle timing problem.
+   reset deassertion than the pwrseq default of 200 ms. Note that combo 2 does get
+   the chip running, which argues against a gross power problem.
+5. Is the module itself faulty (soldering, antenna path)? With the NVRAM now known
+   to change the failure point, a hardware fault seems less likely than it did —
+   a marginal chip would not respond that predictably to a configuration file.
+
+Combo 5 is now low value: RPi's 43455 NVRAM differs from its 43456 NVRAM only in PA
+calibration values and `btc_params50`, so it should land where combo 2 landed.
 
 ## 9. How to continue
 
