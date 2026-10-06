@@ -10,7 +10,7 @@ WiFi 排查有独立文档：[`docs/WIFI-INVESTIGATION.md`](docs/WIFI-INVESTIGAT
 
 ---
 
-## 状态：⚠️ 板子当前变砖，根因已定位并修复，未在真机复验
+## 状态：板子可用；本移植的引导程序在真机上**未验证**，且这是有意保留的状态
 
 分支 `radxa-rock-4b-plus`，基线 `v25.12.5`，领先 12 个提交：
 
@@ -31,30 +31,52 @@ ac700b2f8d  rockchip: do not track the .config backup file
 
 未推送到任何上游 remote。设备树是**继承上游**的 130 行 delta，维护成本极低。
 
-> ### ⚠️ 板子已于 2026-10-06 救回，但那次变砖暴露了移植本身的缺陷
+> ### ⚠️ 本移植的引导程序从未在真机上运行过
 >
-> SPI 上的 U-Boot 在 TPL 阶段就退出，因为它的板级设备树缺 `rockchip,sdram-params`，
-> 无法初始化 DRAM：
+> 这不是"还没来得及试"，而是**试过、确认只有一条路、而这条路被有意不走**。
+>
+> **背景。** 2026-10-06 板子变砖：SPI 上的 U-Boot 在 TPL 阶段退出，因为它的板级
+> 设备树缺 `rockchip,sdram-params`，无法初始化 DRAM。
 >
 > ```
 > rk3399_dmc_of_to_plat: Cannot read rockchip,sdram-params -1
 > DRAM init failed: -1
 > ```
 >
-> **构建过程完全静默** —— `idbloader.img` 正常产出、大小也正常。这个缺陷只能靠
-> "把这份引导程序刷进 SPI" 才暴露，而那时已经无法写入替换（RK3399 的启动顺序是
-> SPI → eMMC → SD，SPI 在最前）。
+> **构建过程完全静默** —— `idbloader.img` 正常产出、大小也正常。缺陷只能靠"把这份
+> 引导程序刷进 SPI"才暴露，而那时已经无法写入替换。
 >
-> **已修**：补上 `arch/arm/dts/rk3399-rock-4b-plus-u-boot.dtsi`，重建后
-> `rockchip,sdram-params` 与 `binman` 节点都在，`build.sh` 加了 7 条断言盯住，
-> 其中 3 条直接打在**镜像**上。
+> **已修并在构建层面验证**：补上 `arch/arm/dts/rk3399-rock-4b-plus-u-boot.dtsi`，
+> `rockchip,sdram-params`（1530 个 u32）与 `binman` 节点都在编译出的 `u-boot.dtb`
+> 里，镜像 LBA 0x40 处也确实带着这份修好的引导程序；`build.sh` 有 16 条断言盯住，
+> 其中 3 条直接打在镜像上。
 >
-> **已用 Maskrom 验证恢复路径可用**：官方 `rk3399_loader` + Armbian 引导程序成功
-> 救回，`FLASHING.md` 第 7 节与第 10 节的流程均已在真机上走通。
+> **为什么没在真机上跑。** 要让本移植的 TPL 执行，只能改 SPI 里的引导程序，而
+> 这三条路都已排除：
 >
-> **修复后的 U-Boot 仍未在真机上执行过。** 顺带查明：**镜像本来就自带引导程序**
-> （LBA 0x40 + LBA 0x4000），所以 SPI 不是必需的 —— 这条以前文档写反了。
-> 排查记录见 `docs/BRICK-U-BOOT-DDR.md`。
+> | 路线 | 结果 |
+> |---|---|
+> | 从运行中的系统写 SPI | ❌ Linux 读不到芯片内容（两次读字节完全相同，但无 rkimage 头、无 FIT、无 banner），**写入无法验证** |
+> | 短接 SPI 引脚让 boot ROM 跳过 SPI | ❌ 实测无效：短接后 `mtd0` 消失，但串口第一行仍是 SPI 里的 TPL |
+> | 借道镜像自带的那份 | ❌ SPI 排第一、读到就赢，卡上 LBA 0x40 那份从未被执行 |
+>
+> 只剩 Maskrom 一条，**已验证可用**（官方 `rk3399_loader` + Armbian 引导程序成功
+> 救回），但会覆盖掉 SPI 上那份可用的引导程序 —— 决定**不写**。
+>
+> ### 这个未验证项的实际风险落在哪
+>
+> **这块板子不受影响** —— SPI 里是 Armbian 的 U-Boot，OpenWrt 已实测从 microSD
+> 完整启动（`/boot.scr` + `Linux-6.12.94` kernel FIT + `radxa_rock-4b-plus` dtb，
+> crc32+sha1 校验通过）。
+>
+> **⚠️ 风险在不贴 SPI 的 V1.73 量产板上。** 那类板 boot ROM 没有 SPI 可读，
+> **只能**用镜像自带的那份引导程序 —— 而那份恰好就是唯一没在真机上跑过的东西。
+> 换句话说：SPI 在这里既是麻烦（挡路），也是保护（提供一份能用的引导程序）。
+>
+> **要关闭这一项需要做的事**：用 Maskrom 把 `idbloader-spi.img` + `u-boot.itb`
+> 写进 SPI，上电看串口第一行是否变成 `U-Boot TPL 2025.10-OpenWrt-…`。
+> 失败了按同一流程刷回 Armbian（SPI 上只有引导程序，完全可从镜像文件复现）。
+> 详见 `FLASHING.md` 第 10 节与 `docs/BRICK-U-BOOT-DDR.md`。
 
 本移植的文档、overlay 源文件和脚本在**另一个仓库**（本机 `rockpi4bp`）里，两个仓库
 都没有 remote。`scripts/sync-overlay.sh` 负责比对两边的 `overlay/` 与 OpenWrt 树 ——
@@ -862,7 +884,11 @@ gpio-keys   不存在 ✓（按设计删除）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 6：eMMC 安装验证 —— **`dd` 已完成且哈希校验一致，但从未成功启动过**
       （板子在验证之前就因 SPI 的 U-Boot 变砖）
-- [ ] Phase 5g / 新增：**修复后的 U-Boot 上真机复验**，并把 SPI 修好
+- [ ] Phase 5g：**本移植的 U-Boot 上真机复验** —— **有意保留为未验证**，三条路
+      实测排除后只剩 Maskrom 写 SPI，决定不写（详见本文顶部状态节）
+- [x] Phase 5h：查明镜像**自带**引导程序（LBA 0x40 + 0x4000），并加断言盯住
+- [x] Phase 5i：给内核补上 `&spi1` + `flash@0`，让 SPI 闪存在 OpenWrt 下可见
+      （同时查明 Linux 读不到它的正确内容，见 `docs/BRICK-U-BOOT-DDR.md`）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）
 
 ---
