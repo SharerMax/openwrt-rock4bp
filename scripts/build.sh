@@ -118,7 +118,7 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   # clock-names must be "ext_clock" and not "lpo". mmc-pwrseq-simple only ever
   # looks up "ext_clock", so with "lpo" the RK808 32 kHz output is silently
   # never enabled before the WiFi reset is released. See
-  # docs/WIFI-INVESTIGATION.md section 0.
+  # docs/wifi.md section 0.
   check "dtb enables the WiFi power-sequence clock (ext_clock, not lpo)" \
     "'$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -qE \"clock-names = \\\"ext_clock\\\"\""
 
@@ -183,7 +183,7 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   #     dd if=$(UBOOT_DEVICE_NAME)-u-boot-rockchip.bin of=$@ seek=64 conv=notrunc
   # so the rkimage container sits at byte 0x8000 and the U-Boot ITB at sector
   # 0x4000. This was documented as NOT happening -- both README.md and
-  # FLASHING.md said the image contains no bootloader -- which is why it was
+  # docs/flashing.md said the image contains no bootloader -- which is why it was
   # worth checking rather than assuming either way. It does happen, so the
   # image is self-bootable and the SPI is not load-bearing.
   #

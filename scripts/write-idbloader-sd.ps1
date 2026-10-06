@@ -16,7 +16,7 @@
     card are left intact. Nothing is erased and nothing is formatted.
 
     Why LBA 0x40 and not 0: that is where the RK3399 boot ROM looks, and it
-    is where Armbian puts it. Evidence recorded in FLASHING.md section 7 --
+    is where Armbian puts it. Evidence recorded in docs/flashing.md section 7 --
     the first 8 bytes of this idbloader match the first 8 bytes of the
     Armbian image at that offset byte for byte.
 

@@ -3,11 +3,16 @@
 Board: **Radxa ROCK (Pi) 4B+**, early revision (V1.6/V1.72: 4 MB SPI flash populated,
 32 GB onboard eMMC), RK3399-T (OP1) + RK808.
 
-Status: **WiFi works.** `wlan0` comes up, associates and scans — 16 networks across
-both bands — on the shipped image. The fix was one property in the device tree; see
-§0. What follows is the record of how it was found, because the path matters more
-than the answer: the firmware matrix below was testing the wrong variable for
-several rounds, and only an outside comparison ended it.
+Status: **WiFi works.** `wlan0` comes up and scans — 15 networks on 2026-10-06, with
+firmware 7.84.17.1 running and no `HT Avail timeout`. The fix was one property in the
+device tree; see §0. What follows is the record of how it was found, because the path
+matters more than the answer: the firmware matrix below was testing the wrong variable
+for several rounds, and only an outside comparison ended it.
+
+**Scope.** §1-§4 are the pre-fix investigation. §5 (firmware source and licence) and §9
+(the harness) are still the reference for those topics. §8 has the current on-hardware
+result. Related: [device-tree.md](device-tree.md) for the property itself,
+[build.md](build.md) §BCM43456 固件包 for the packaging.
 
 ---
 
@@ -660,7 +665,7 @@ fallback works -- the version string follows immediately in the log.
 ### Remaining work
 
 1. **eMMC install.** Unrelated to WiFi, still pending. The `dd` procedure is
-   checked in FLASHING.md §7. Note the chip now carries a reinstalled Armbian, not the
+   checked in docs/flashing.md §7. Note the chip now carries a reinstalled Armbian, not the
    layout this file assumed when the `dd` was first run.
 2. HDMI and audio remain out of scope, as before.
 
@@ -704,3 +709,12 @@ The script must be on the board first:
 ```sh
 scp scripts/wifi-test.sh root@<board>:/root/
 ```
+
+---
+
+## Related
+
+- [device-tree.md](device-tree.md) — the `lpo` → `ext_clock` property, and why it is silent
+- [build.md](build.md) — the BCM43456 firmware package and its licence
+- [hardware.md](hardware.md) — AP6256 hardware placement, pwrseq clock source
+- [AGENTS.md](../AGENTS.md) — house rules, including how to report verification status

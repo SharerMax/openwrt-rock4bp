@@ -1,4 +1,12 @@
-# ROCK 4B+ OpenWrt 25.12.5 — 烧卡与首次启动
+# 烧卡与首次启动
+
+把镜像拿到手、烧到介质上、第一次上电该看什么、出了问题怎么回退、eMMC 怎么装、
+板子起不来时怎么救。
+
+构建和校验见 [build.md](build.md)，硬件细节见 [hardware.md](hardware.md)，
+启动顺序与 SPI 的特殊性见 [boot-order.md](boot-order.md)。
+
+---
 
 ## 1. 拿到镜像
 
@@ -15,21 +23,22 @@ scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/openwrt-rockchip-
 scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/sha256sums .
 ```
 
-校验（**当前构建 `3d57e40`**）：
+校验（**当前构建 `a48a30233f`**）：
 
 ```
-c218adcd8556d4cd3a7e87eaabe5f8de496571884b4847b4675f073c2ab33103  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
-bf684c3d6ac4d8e6aab56e6e716d27f0854927b98ffa355935229d8d73cc2a30  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
+5a09fc419fb39a81ee3d749f8edcaeaf6313a31e9422b2b476b8db65c7701325  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
+f462fb96ed4eccb4c29452ce8ab8a5b2964294fc3678129866baedccaed11d29  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
 ```
 
 **历史校验和**（别搞混，sha256 变了就是不同镜像）：
 
-| squashfs sha256 | 说明 |
+| 镜像 sha256 开头 | 说明 |
 |---|---|
 | `6386de591b5f…` | WiFi/BT 修复前（`sdio0` disabled，芯片不上电） |
 | `06b61b20dceb…` | 补上 4 个板级 override，WiFi 硬件层打通 |
 | `9932b3dad4d2…` | 删掉猜测的 gpio-keys 节点，包集合修正 |
-| `50092eba850c…` | 固件源与许可纠正前的最后一版 |
+| `50092eba850c…` / `07d22b762c20…` | 固件源与许可纠正前的最后一版 |
+| `e64004a0…` | 2026-10-06 上机验证用的那一版 |
 
 > ⚠️ **别用 `gzip -t` 校验 OpenWrt 镜像。** 它会返回 **exit 2** 并报
 > `trailing garbage ignored` —— 这**不是**下载损坏。OpenWrt 的 sysupgrade 镜像在
@@ -49,14 +58,15 @@ bf684c3d6ac4d8e6aab56e6e716d27f0854927b98ffa355935229d8d73cc2a30  openwrt-rockch
 **第一次建议烧 squashfs**（只读、损坏面小、启动快、便于反复重刷）。
 ext4 版本适合后续要持久化数据或装大量包时再用。
 
-> **实际用的是 ext4，不是 squashfs。** 2026-10-06 上机验证的是 **ext4** 镜像
-> （`e64004a0…`，177 个包）。两个镜像共用同一份 manifest，所以包集合相同
-> （`brcmfmac-firmware-43456-sdio - 7.84.17.1-r2`），WiFi 行为不受影响 ——
-> 但**squashfs 镜像至今未在真机上启动过**，要验证的话还得单独刷一次。
+> ⚠️ **当前板上跑的是 ext4。** 2026-10-06 那次 microSD 启动用的是 **ext4** 镜像，
+> 后续又重烧过一次（当前 `5a09fc41…`）。两个镜像共用同一份 manifest，所以包集合相同
+> （`brcmfmac-firmware-43456-sdio - 7.84.17.1-r2`）。
 >
-> 对 WiFi 排查而言 ext4 其实更合适：根文件系统可写，固件文件原生持久化，
-> 不必再靠 overlay 那一层。`scripts/deploy.sh` 默认找的是 squashfs 镜像，
-> 烧 ext4 需要手动指定文件名。
+> **squashfs 镜像至今未在真机上启动过**，要验证的话还得单独刷一次。
+>
+> 对 WiFi 排查而言 ext4 更合适：根文件系统可写，固件文件原生持久化，不必再靠 overlay
+> 那一层。⚠️ `scripts/deploy.sh` 默认找的是 **squashfs** 镜像，烧 ext4 要显式指定
+> 第二个参数 —— 不指定就会烧到另一份镜像上去。
 
 > ⚠️ **别再用那块 SD 卡**。第一次烧 SD 卡时出现 `I/O error ... sector 135842`
 > 加 `SQUASHFS error -5`，rootfs 读不了；换 U 盘烧**同一镜像**一次启动成功 ——
@@ -188,8 +198,7 @@ cat /proc/cmdline
 
 ## 6. 烧完核对清单
 
-系统已四次上机验证通过，下面是**回归核对**用的 —— 每一项都是 tty5 日志里
-实测到的值，可以逐条比对。
+下面是**回归核对**用的 —— 每一项都是板上实测到的值，可以逐条比对。
 
 ### 串口日志里要确认的
 
@@ -223,10 +232,21 @@ U-Boot 加载 FIT 时会打印：
 
 ```
 Description:  ARM64 OpenWrt radxa_rock-4b-plus device tree blob
-Data Size:    63787 Bytes = 62.4 KiB
+Data Size:    63877 Bytes = 62.4 KiB
 ```
 
-`63787` 对应"WiFi 供电时钟改名为 ext_clock"这一版。数值不符说明烧的是旧镜像。
+⚠️ **dtb 大小随镜像版本变，别把它当成常量。** 演进过：
+
+| 字节数 | 对应哪一版 |
+|---|---|
+| 63273 | 缺 4 个板级 override |
+| 63956 | 补上 WiFi/BT/音频 |
+| 63779 | 删掉 gpio-keys |
+| 63787 | WiFi 供电时钟改名 `lpo` → `ext_clock` |
+| **63877** | 加上 `&spi1` + `flash@0`（**当前**） |
+
+数值不符说明烧的是旧镜像 —— 但**要以构建产物为准**，别照抄本文：
+`stat -c%s build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/image-rk3399-rock-4b-plus.dtb`
 
 ### 进系统后逐项检查
 
@@ -242,38 +262,44 @@ ip link
 `ip link` 显示 `NO-CARRIER` 只是没插网线，PHY 已 attach。插上线应能从
 `192.168.1.1` 打开 LuCI。
 
-**WiFi 硬件层**
+**WiFi**
+
+⚠️ **OpenWrt 出厂配置里 `default_radio0.disabled='1'`**，所以开机会看到
+`wlan0 ... state DOWN`、扫描 0 个 BSS。**这不等于芯片坏了** —— 先把接口拉起来再扫：
 
 ```sh
 dmesg | grep -iE "mmc2|brcmfmac|sdio-pwrseq"
 cat /sys/kernel/debug/gpio | grep -i reset
-ip -br link show wlan0
-iw dev wlan0 scan | grep -c '^BSS '
+ip link show wlan0                        # ⚠️ busybox 的 ip 不支持 -br
+ip link set wlan0 up
+iw dev wlan0 scan | grep -c '^BSS'
 ```
 
-期望全部通过：
+期望：
 
 ```
 mmc2: new ultra high speed SDR104 SDIO card
 gpio-10 (|reset) out hi                              芯片出复位
 brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4345/9 wl0: ... version 7.84.17.1
-wlan0    UP    08:fb:ea:65:f8:da
-16                                                     扫到的网络数（会变）
+3: wlan0: <BROADCAST,MULTICAST>  link/ether 08:fb:ea:65:f8:da
+15                                                     扫到的网络数（会变）
 ```
 
 `brcmf_c_preinit_dcmds` 那一行是关键 —— 它出现就说明芯片真的在跑固件并响应驱动。
+**没有 `HT Avail timeout`** 就是修好了。
 
-**`63787` 字节的 dtb 才带 WiFi 修复。** 早期版本 `wlan0` 不出现，两个阶段的原因
-完全不同：
+⚠️ 用 `ip link show`，不要用 `ip -br link show` —— busybox 的 `ip` 不支持 `-br`，
+返回空，看起来像"没有无线网卡"。
+
+早期版本 `wlan0` 不出现，两个阶段的原因完全不同：
 
 - 缺 `brcmfmac43456-sdio.bin`（non-free 固件缺口）
-- 固件装上了、上传也成功，但芯片起不来：
-  `brcmf_sdio_htclk: HT Avail timeout` —— 根因是 `sdio-pwrseq` 的时钟属性名写成
-  `lpo`，驱动只认 `ext_clock`，导致 32.768 kHz 时钟从未使能。修法见
-  `docs/WIFI-INVESTIGATION.md` §0。
+- 固件装上了、上传也成功，但芯片起不来：`brcmf_sdio_htclk: HT Avail timeout` ——
+  根因是 `sdio-pwrseq` 的时钟属性名写成 `lpo`，驱动只认 `ext_clock`，导致 32.768 kHz
+  时钟从未使能。完整分析见 [wifi.md](wifi.md) 的第 0 节。
 
-如果 `wlan0` 出现但扫不到网络，那是 regdb / 射频功率 / 信道设置问题，与本移植无关
-（`CONFIG_CFG80211_CRDA_SUPPORT` 在 OpenWrt 内核里未开，属于上游取舍）。
+如果 `wlan0` 出现、固件也在跑，但扫不到网络，那是 regdb / 射频功率 / 信道设置问题，
+与本移植无关（`CONFIG_CFG80211_CRDA_SUPPORT` 在 OpenWrt 内核里未开，属于上游取舍）。
 
 **recovery / Maskrom 按键**
 
@@ -349,28 +375,31 @@ U-Boot 的 `BOOT_TARGETS` 是 `"mmc1 mmc0 nvme scsi usb pxe dhcp spi"`，
 ⚠️ **从 U 盘启动时不要用 `sysupgrade`**。此时 root 在 `/dev/sda2`，
 sysupgrade 会把 U 盘当成升级目标，等于覆盖你自己的启动盘。走手工 `dd`。
 
-⚠️ **eMMC 上原本装着一套完整可用的 Armbian。** 本文档早期版本把它描述成"一个裸
-分区 `mmcblk0: p1`，没有大小也没有名字，内容未知" —— **那是错的**，当时的结论来自
-启动日志里没有分区名，而没有实际去读。只读挂载一看就清楚了：
+### ⚠️ eMMC 上有什么：先只读地看清，再决定
+
+**这一步不能跳过。** `dd` 会覆盖整盘，**不可逆**。
+
+本文档早期版本把 eMMC 描述成"一个裸分区 `mmcblk0: p1`，没有大小也没有名字，内容未知"
+—— **那是错的**，当时的结论来自启动日志里没有分区名，**而没有实际去读**。
+只读挂载一看就清楚了 —— 而且**从启动日志读不出来**：日志里看不到分区名，不代表盘上是空的。
+
+**当前实测状态（2026-10-06）** —— eMMC 上是一套 **Armbian**：
 
 ```
-$ mount -o ro /dev/mmcblk0p1 /mnt/emmc && ls /mnt/emmc
-PRETTY_NAME="Armbian_community 26.11.0-trunk.62 trixie"   (etc/os-release)
-$ ls /mnt/emmc/boot/
-vmlinuz-6.18.54-current-rockchip64   initrd.img-6.18.54-current-rockchip64
-armbianEnv.txt   boot.cmd   boot.scr   dtb-6.18.54-current-rockchip64
-$ cat /mnt/emmc/etc/hostname
-rockpi-4b
-$ ls /mnt/emmc/home/
-rock                                    ← 有用户数据
-$ du -sh /mnt/emmc
-1.5G
+/proc/partitions
+  179 0   30310400  mmcblk0        ← 28.9 GiB
+  179 1   29982720  mmcblk0p1      ← 单个 29280 MiB 分区，不是 OpenWrt 镜像的布局
+
+mmcblk0  MBR 签名 55 aa 有效
+mmcblk0p1 offset 1080 处: 53 ef    ← ext4 superblock magic
 ```
 
-`dd` 会覆盖 MBR 和 p1/p2，**不可逆**，这套 Armbian 和 `/home/rock` 会永久消失。
-2026-10-06 执行时是在明确告知后选择直接覆盖的。
+⚠️ **那套 Armbian 已经被覆盖过一次，没有备份。** 原始那块 eMMC 上装的是完整的
+Armbian 26.11.0-trunk.62（内核 6.18.54、hostname `rockpi-4b`、1.5 GB、含用户 `rock`
+家目录），**2026-10-06 执行 `dd` 时是在明确告知后选择直接覆盖的**，代价是那套系统和
+`/home/rock` 永久消失。现在盘上这套是后来重装的。
 
-**先只读地看清，再决定：**
+**所以下次要 `dd`，先备份。** 先只读地看清里面是什么：
 
 ```sh
 mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc
@@ -418,10 +447,13 @@ ssh root@<board> '
 '
 ```
 
-两个 sha256 必须一致。2026-10-06 实测一致：
-`5847c6118853b40a66587c220e484c50b19103e2df72e10a1f1ccd7a77ff760f`
+两个 sha256 必须一致。
 
-写完的 MBR 应当是（实测）：
+⚠️ **2026-10-06 那次 `dd` 的校验确实一致**（`5847c611…`），**但那次之后 eMMC 被重装了**
+（变砖救回过程中的操作），所以现在盘上不是那个布局。上面「先只读地看清」一节里记的是
+**当前**实测状态。`5847c611…` 这个值只说明当时写对了字节，不是盘上现在的内容。
+
+写完的 MBR 应当是（当时实测）：
 
 | 分区 | 类型 | 起始 LBA | 大小 |
 |---|---|---|---|
@@ -442,24 +474,32 @@ Rockchip 的 U-Boot TPL 不从那里读，动了反而可能出问题。
 **不要用 `sysupgrade` 装到 eMMC**：从 U 盘启动时 root 在 `/dev/sda2`，sysupgrade
 会把 U 盘当成升级目标。
 
-## 装完如何确认真的从 eMMC 引导
+### 装完如何确认真的从 eMMC 引导
 
-U 盘插着也能启动（`BOOT_TARGETS` 里 `mmc0` 排在 `usb` 前面），所以**要验证就必须
-先拔掉 U 盘**，否则无法区分引导源：
+⚠️ **这条从未验证过。** eMMC 引导至今没有真机证据。
+
+⚠️ **两个介质同时插着也能启动**，所以**要验证必须先拔掉 microSD/读卡器**，否则
+无法区分引导源：
 
 ```sh
-# 断电、拔掉 U 盘、上电，然后：
+# 断电、拔掉 microSD、上电，然后：
 sed 's/.*root=//;s/ .*//' /proc/cmdline     # 不再是 PARTUUID=...-02
 cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
 ```
 
-如果 dd 完起不来，回退方式：插 U 盘。U-Boot 的 boot 链会自动往后走到 `usb`
-（tty4/tty5 日志已经两次证明这条路走得通）。
+⚠️ 注意当前 SPI 上是 **Armbian 的 U-Boot**，不是本移植编出来的那份。它的
+`BOOT_TARGETS` 里 `mmc0` 排在 `usb` 之前，所以这条路**原理上现在是通的** —— 但那只说明
+"Armbian 的 U-Boot 会引导 eMMC"，**不能用来证明本移植的引导程序可用**（那份从未被执行）。
+
+如果 `dd` 完起不来，回退方式：插 microSD。U-Boot 的 boot 链会自动往后走到 `usb`
+（这条已经多次走通）。
 
 ### 最后一层兜底：Maskrom 模式
 
-板载按键是 **Maskrom 按键**，不是 recovery 键。功能由 **boot ROM 在上电瞬间**
-采样决定 —— Linux 侧看不到任何事件（这也是我从 DTS 里删掉 gpio-keys 节点的原因）。
+**这是唯一能改写 SPI 上引导程序的路径。** 板子起不来、microSD 也救不回来时的最后手段。
+
+板载按键是 **Maskrom 按键**，功能由 **boot ROM 在上电瞬间**采样决定 —— Linux 侧看不到
+任何事件。按键的硬件事实与板型辨识见 [hardware.md](hardware.md#板载按键是-maskrom不是-recovery)。
 
 Radxa 官方进 maskrom 的步骤：
 
@@ -471,76 +511,66 @@ Radxa 官方进 maskrom 的步骤：
 ⑤ 主板供电后松开 Maskrom 按键
 ```
 
-成功后**电源绿灯常亮**，PC 上会枚举出 Rockchip 的 maskrom USB 设备，
-用 `rkdeveloptool` 就能重新刷写。
+成功后**电源绿灯常亮**，PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为
+`2207:330c`），用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
 
 ⚠️ **第 ① 步对这块板是必需的** —— 本板贴了 4MB SPI Flash，不短接的话 SPI 里的
 U-Boot 会先接管，拿不到 maskrom。
 
-好消息是**只有进 maskrom 才需要短接 SPI**，正常的 SPI 引导（以及上面的 `dd`
-路线）完全不受影响，短接也不用常做。
+好消息是**只有进 maskrom 才需要短接 SPI**，正常的 SPI 引导（以及上面的 `dd` 路线）
+完全不受影响，短接也不用常做。
 
-> ⚠️ 但别把"短接"读成"绕过 SPI 的手段"。实测短接**不会**让 boot ROM 跳过 SPI
-> —— 见第 10 节"已验证无效"那条。
-
-顺带一提：Radxa 文档说 4A/4B/4SE 用可拆卸 eMMC Module，而 **4A+/4B+ 是板载
-eMMC，不支持热插拔模组**，所以 4B+ 刷机走的是 maskrom over USB 而不是模组读卡器。
-
----
-
-## 8. 关于板型和版本的一点说明
-
-这块板是 **ROCK (Pi) 4B Plus**，2022 年 Radxa 去掉了产品线名字里的 "Pi"，
-所以也叫 ROCK 4+（详见项目 README 的"板型辨析"节）。
-
-**你这块是有 4MB SPI Flash 的早期版（约 V1.6/V1.72），不是 V1.73 量产版。**
-判据是 Radxa 官方 revisions.md：V1.73 起 SPI Flash 不贴装；
-而 2021 年主线补丁里 Radxa 官方原话是 *"dev boards have SPI flash soldered,
-but as per manufacturer response, this won't be the case for mass production boards"*。
-串口日志里的 `SF: Detected XT25F32B ... total 4 MiB` 印证了这点。
-
-实际影响：**U-Boot 保留 SPI 引导和环境变量支持**。上次日志出现过
-`Loading Environment from SPIFlash... *** Warning - bad CRC, using default environment`
-—— CRC 坏了所以用默认环境变量，**不影响启动**（后面照样正常引导了）。
-如果后续想启用 SPI 环境变量功能，需要先擦写 SPI 里的 u-boot.env。
-
-## 9. 备用：Maskrom 模式（详见第 7 节末尾）
-
-板子起不来、U 盘也救不回来时的最后手段。**具体步骤见第 7 节"最后一层兜底：
-Maskrom 模式"**，那里是照 Radxa 官方文档 `low-level-dev/maskrom` 抄的：
-断电 → 按住 Maskrom 键 → 上电 → 松手，绿灯常亮即成功。
-
-⚠️ 本板贴了 SPI Flash，**进 maskrom 前必须把 SPI Flash 引脚短接到 GND**，
-否则 SPI 里的 U-Boot 会先接管，拿不到 maskrom。
-
-成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为 `2207:330c`），
-用 `rkdeveloptool` 重新烧写。
+> ⚠️ **但别把"短接"读成"绕过 SPI 的手段"。** 实测短接**不会**让 boot ROM 跳过 SPI
+> —— 短接后 `mtd0` 消失，但串口第一行仍是 SPI 里的 TPL。**SPI 排第一、读到就赢。**
+> 详见 [boot-order.md](boot-order.md)。
 
 ✅ **这条路径已在真机上验证过**（2026-10-06）：SPI 上的 U-Boot 起不来时，用官方
 `rk3399_loader` 加 Armbian 的引导程序成功救回。这条路径可用，比整机报废值得好得多。
 
-### 关于按键数量的一个说明
+⚠️ **写 SPI 需要两个文件、两个偏移**：`idbloader-spi.img`（TPL+SPL）和 `u-boot.itb`
+（U-Boot 本体）。**只写前者只能到 SPL。**
 
-旧 wiki 记的是"三个按键 maskrom / reset / recovery，同时按住 maskrom + reset 进
-maskrom"。而 Radxa **当前**文档对 4A+/4B+ 的描述只提一个 **Maskrom 按键**，
-且操作是"按住 + 上电"，没有提 reset 组合。
+⚠️ **`recovery/` 里那份不是当前构建的字节。** 要写 SPI 应从当前构建目录取：
 
-以官方文档为准。实测的硬件事实：**板载按键按下去没有任何 GPIO 电平变化**
-（见 README"recovery 按键"小节），这与"按键由 boot ROM 在上电瞬间采样"一致 ——
-如果它同时被 Linux 当输入用，按下就应该能在 debugfs 里看到变化。
-另外 4B+ 没有独立的 recovery 功能键：maskrom 本身就是 Rockchip 的恢复入口。
+```
+build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10/
+```
 
 ---
 
-## 10. SPI 里的 U-Boot 起不来时怎么救（DRAM 初始化失败）
+## 8. 板型、版本与 SPI 环境变量
 
-> 排查过程（含几条走错的岔路）、根因、以及哪些部分已验证/未验证，记在
-> `docs/BRICK-U-BOOT-DDR.md`。本节只讲怎么救。
+板型辨识、早期版 vs V1.73 量产版的区别，见 [hardware.md](hardware.md)。这里只记一条
+与恢复相关的：
+
+**这块板贴了 4MB SPI Flash（早期版，约 V1.6/V1.72）。** 判据是串口日志里的
+`SF: Detected XT25F32B ... total 4 MiB`。
+
+日志里这条**无害**：
+
+```
+Loading Environment from SPIFlash... *** Warning - bad CRC, using default environment
+```
+
+CRC 坏了所以用默认环境变量 —— 而默认的 `BOOT_TARGETS` 已经同时包含 eMMC 和 USB，
+照样能引导。
+
+⚠️ **但别把 `bad CRC` 归因于缺 `/etc/fw_env.config`。** 早先文档这么写过，**已撤回**
+—— 这条消息从项目最开始就有，早于 SPI 节点、也早于短接 SPI 实验，所以不是缺配置文件
+造成的。更可能的原因是这块 SPI 在 Linux/U-Boot 下读不到正确内容，但**没有证据，
+不下结论**。见 [boot-order.md](boot-order.md#linux-从这块-spi-读不到正确的内容)。
+
+---
+
+## 9. SPI 里的 U-Boot 起不来时怎么救（DRAM 初始化失败）
+
+> 排查过程（含几条走错的岔路）、根因、方法论陷阱、以及哪些部分已验证/未验证，记在
+> [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md)。本节只讲怎么救。
 
 ### 当前状态（2026-10-06）
 
 **板子已恢复可用，SPI 上是 Armbian 的 U-Boot。** 这一节保留下来是因为流程仍然有效，
-而且下面两条结论是**实测排除**的，将来不必再走一遍。
+而且下面几条结论是**实测排除**的，将来不必再走一遍。
 
 | | 状态 |
 |---|---|
@@ -579,38 +609,29 @@ TPL 拿不到 DRAM 参数就直接退出，连 SPL 都进不去。
 **构建过程完全没有提示**：`idbloader.img` 正常产出、大小也正常，
 只有把它刷进 SPI 之后才发现板子起不来 —— 而且到那时已经没法往 SPI 写东西了。
 
-> 同一个坑还有第二层。`scripts/Makefile.lib` 里那个 `wildcard` 是**优先级链、只取第一个命中**：
->
-> ```
-> u_boot_dtsi_options = $(strip $(wildcard <board>-u-boot.dtsi) $(wildcard $(CONFIG_SYS_SOC)-u-boot.dtsi) ...)
-> # We use the first match to be included
-> dtsi_include_list  = $(notdir $(firstword $(u_boot_dtsi_options)))
-> ```
->
-> 所以补上 `<board>-u-boot.dtsi` 之后，通用那份会被**顶掉**而不是叠加，
-> 必须在这个文件里自己 `#include "rk3399-u-boot.dtsi"`，否则构建会停在
-> `binman: Device tree './u-boot.dtb' does not have a 'binman' node`。
->
-> 修复：`package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch`
-> （源文件 `overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi`）。
-> `scripts/build.sh` 里加了 7 条断言盯住这两件事，其中 3 条直接打在**镜像**上 ——
-> 因为修好构建树并不会让已有镜像里的引导程序变好，那是另一次构建的产物。
+修复：`package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch`
+（源文件 `overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi`）。细节与第二层坑见
+[device-tree.md](device-tree.md#缺一个板级-u-boot-dtsi)。
 
 ### 修复后的产物
 
 ```
-b8fa872f46d2654201c036b8a6d6d7276be786cb15cbecd5f86cb5faedf488bf  idbloader.img        192512 B
-e8aaf9319e10a888e727ba5bfb3088a7a0bad3001259bcb085e46ef3c491bd85  idbloader-spi.img   385024 B
+192512   idbloader.img        sha256 76bf3bcf…
+385024   idbloader-spi.img    sha256 62e4142c…
+1295360  u-boot.itb           sha256 37f1c604…
 ```
 
 `rockchip,sdram-params` 现在在编译出的 `u-boot.dtb` 里（1530 个 u32），`binman` 节点也在。
-两次独立构建的产物 sha256 完全一致。修复前的对比：`idbloader.img` 180224 B → 192512 B，
-`idbloader.img` 里 `rockchip,sdram-params` 从 0 处变成 1 处。
+修复前的对比：`idbloader.img` 180224 B → 192512 B，`rockchip,sdram-params` 从 0 处变成 1 处。
+
+⚠️ **这个 sha256 只在源码未改动时稳定**，详见
+[build.md](build.md#可复现的准确含义)。
 
 ### 恢复路线 A：microSD 卡上放一份好的引导程序（首选，不用拆板）
 
-从 microSD 引导时，引导程序放 **LBA 0x40**，理由见第 7 节。**只用
-`idbloader.img`**（192512 B，eMMC/SD 变体），**不要**用 `idbloader-spi.img`。
+从 microSD 引导时，引导程序放 **LBA 0x40**（不是 LBA 0），理由见
+[第 7 节](#装到-emmc32g-板载)。
+**只用 `idbloader.img`**（192512 B，eMMC/SD 变体），**不要**用 `idbloader-spi.img`。
 
 **Linux / 构建机上：**
 
@@ -619,15 +640,12 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 ```
 
 **Windows 上：** 现成的 Etcher / Rufus 不合适 —— 192 KB 的镜像对几十 GB 的卡会被直接
-拒写。仓库里带了一个只写这一处的脚本。
-
-**第 ① 步不带 `-DiskNumber` 只列盘、什么都不写**，先照着容量和型号确认哪块是 microSD
-（系统盘会被标红）：
+拒写。仓库里带了一个只写这一处的脚本：
 
 ```powershell
-.\scripts\write-idbloader-sd.ps1                    # ① 只列盘
-.\scripts\write-idbloader-sd.ps1 -DiskNumber 2 -Preview   # ② 打印完整计划，仍不写
-.\scripts\write-idbloader-sd.ps1 -DiskNumber 2      # ③ 真写
+.\scripts\write-idbloader-sd.ps1                          # ① 只列盘，什么都不写
+.\scripts\write-idbloader-sd.ps1 -DiskNumber 2 -Preview    # ② 打印完整计划，仍不写
+.\scripts\write-idbloader-sd.ps1 -DiskNumber 2             # ③ 真写
 ```
 
 `-Preview` 会把镜像路径/大小/sha256、目标设备、偏移和落点全部打出来然后停下，
@@ -638,17 +656,17 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 拒写任何被 Windows 判定为系统盘/启动盘的设备；拒写非 512 整数倍的偏移、以及放不下的偏移；
 写完**读回校验 sha256**。③ 要手输 `YES` 才继续，没有默认值。
 
-成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（SD 上没有系统、失败），
-再走到 `mmc0`（eMMC 上的 OpenWrt 镜像），应该能直接进系统。
+成功判据：串口打出 SPL 和 U-Boot banner。之后 U-Boot 先试 `mmc1`（卡上没有系统、失败），
+再往后走。
 
-⚠️ **这条路没有在真机验证过，而且只写 `idbloader.img` 是不够的。**
-`idbloader` 只有 TPL+SPL（不含 U-Boot 本体），U-Boot 本体在单独的 `u-boot.itb`
-里、要去 LBA 0x4000。所以往一张空卡上只写 idbloader，板子会停在 SPL 之后。
+⚠️ **只写 `idbloader.img` 是不够的。** 它只有 TPL+SPL（不含 U-Boot 本体），U-Boot 本体
+在单独的 `u-boot.itb` 里、要去 LBA 0x4000。往一张空卡上只写 idbloader，板子会停在
+SPL 之后。
 
 ⚠️ **更实际的做法：直接烧完整的镜像。** 镜像本身就带引导程序（见第 7 节），
 `dd` 整盘下去就行，不用管什么 LBA。
 
-> **这条路线已被真机走通，但要注意它验证的不是本移植的引导程序。**
+> **这条路已被真机走通，但要注意它验证的不是本移植的引导程序。**
 > 2026-10-06 实测：OpenWrt 从 microSD 完整启动 —— Armbian 的 U-Boot 从 SPI 起来，
 > 在卡上找到 `/boot.scr`，加载 `Linux-6.12.94` 的 kernel FIT 和
 > `radxa_rock-4b-plus` 的 dtb，crc32+sha1 校验通过。
@@ -662,32 +680,15 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 
 ### 恢复路线 B：Maskrom 重刷 SPI
 
-见第 7 节"最后一层兜底：Maskrom 模式"。**本板必须先把 SPI Flash 引脚短接到 GND**，
-否则 SPI 里的 U-Boot 会抢先接管，拿不到 maskrom。
+见[最后一层兜底：Maskrom 模式](#最后一层兜底maskrom-模式)。**本板必须先把 SPI Flash
+引脚短接到 GND**，否则 SPI 里的 U-Boot 会抢先接管，拿不到 maskrom。
 
 ✅ **这条路已在真机验证过**（2026-10-06）：用官方 `rk3399_loader` 加 Armbian 的引导
 程序成功救回。
 
-⚠️ **从 Linux 写 SPI 这条替代路径不可用 —— 已在真机验证。**
-
-不是"读不稳定"，是**读到的不是芯片内容**：
-
-- 给内核补上 `&spi1` + `flash@0` 后 `mtd0` 出现了，几何信息也对（4 MiB / 4 KiB / 0 坏块）
-- 两次独立读取（64 KiB 和 4 KiB 块大小各一次）**字节完全相同** —— 稳定性检查满分通过
-- **但整个 4 MiB 里没有 rkimage 头、没有 FIT magic、四个 U-Boot banner 全部不存在** ——
-  而这块芯片上明明有能跑的引导程序
-- 用 Armbian 镜像里那份引导程序做参照比对，四段各 256 字节**全部 NOT FOUND**
-
-**JEDEC ID 这类短事务读对了，批量数据读全是错的。** 所以：
-
-1. 从 Linux 备份下来的**不是芯片内容**，当备份比没有更糟
-2. 从 Linux 写入**无法验证** —— 那是对唯一会造成不可逆变砖的介质做盲写
-
-⚠️ 这个故障最危险的地方在于它**能通过任何"读是否稳定"的检查**（确定性失败每次返回
-一样的错误数据）。别把"两次读一致"当成"读对了"。
-
-⚠️ 写入要**两个文件、两个偏移**：`idbloader-spi.img`（TPL+SPL）和 `u-boot.itb`
-（U-Boot 本体）。只写前者只能到 SPL。
+⚠️ **❌ 从 Linux 写 SPI 这条替代路径不可用 —— 已在真机验证。**
+不是"读不稳定"，是**读到的不是芯片内容**。完整证据见
+[boot-order.md](boot-order.md#linux-从这块-spi-读不到正确的内容)。
 
 ### ❌ 已验证无效：短接 SPI 引脚让 boot ROM 跳过 SPI
 
@@ -704,5 +705,5 @@ dd if=idbloader.img of=/dev/sdX bs=512 seek=64 conv=fsync
 
 ### 进了系统之后不要试图修 SPI
 
-原文档这里写的是"第一件事是把 SPI 修好"。**做不到** —— 见上面，读不回来就无法验证，
+原文档这里写的是"第一件事是把 SPI 修好"。**做不到** —— 读不回来就无法验证，
 写下去是盲写。要修只能用 Maskrom。

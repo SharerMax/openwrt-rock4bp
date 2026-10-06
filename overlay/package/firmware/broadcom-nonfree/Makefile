@@ -103,7 +103,7 @@ PKG_MAINTAINER:=ROCK 4B+ port <port@local>
 # Other builds of the same filename exist in the wild, for example a 7.45.96.0
 # one in armbian/firmware (482927 bytes, sha256 3167956a...). Neither this port's
 # firmware tests nor any known report shows one of them bringing up a BCM43456
-# where the others do not; see docs/WIFI-INVESTIGATION.md.
+# where the others do not; see docs/wifi.md.
 
 FW436_SRCDIR:=$(CURDIR)/files
 FW436_SHA_BIN:=ddf83f2100885b166be52d21c8966db164fdd4e1d816aca2acc67ee9cc28d726

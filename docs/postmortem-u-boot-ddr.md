@@ -1,9 +1,11 @@
 # U-Boot 变砖：DRAM 初始化失败
 
-2026-10-06。这块板子现在起不来。本文记录症状、排查过程（**包括走错的岔路**）、
-根因、修复，以及哪些部分已验证、哪些没有。
+**排查记录。** 2026-10-06，这块板子起不来了。本文记录症状、排查过程（**包括走错的
+岔路**）、根因、修复，以及哪些部分已验证、哪些没有。
 
-恢复步骤在 `FLASHING.md` 第 10 节，不在本文。
+**只想知道结论**：见 [boot-order.md](boot-order.md) 和 [README.md](../README.md) 顶部的
+状态节。**要动手恢复**：见 [flashing.md](flashing.md) 第 9 节。**要理解修复本身**：
+见 [device-tree.md](device-tree.md)。
 
 ---
 
@@ -96,7 +98,7 @@ u-boot.itb at LBA 0x4000"*。我只是查错了地方。
 
 上面那条岔路是关于 Armbian 镜像的。**同一个错误结论，本文作者对自家镜像也犯过。**
 
-`README.md` 和 `FLASHING.md` 当时都写着"镜像里不含 TPL/SPL/idbloader —— SPI 上已有
+`README.md` 和 `docs/flashing.md` 当时都写着"镜像里不含 TPL/SPL/idbloader —— SPI 上已有
 U-Boot，够了"。这句话**也是没查就写的**，而且方向恰好相反。
 
 实际去查自家镜像：
@@ -395,7 +397,7 @@ dump contains d00dfeed         : no
 1. **没法从 Linux 做可信备份。** 备份下来的不是芯片内容。
 2. **不能从 Linux 写入引导程序。** 写完读不回来验证 —— 那是对唯一会造成不可逆变砖
    的介质做盲写。
-3. `FLASHING.md` 原本那句"进了系统之后第一件事是把 SPI 修好"**行不通**，
+3. `docs/flashing.md` 原本那句"进了系统之后第一件事是把 SPI 修好"**行不通**，
    已改为走 Maskrom。
 
 ### 短接 SPI 引脚：✅ 已验证对 boot ROM 无效
@@ -420,6 +422,16 @@ dump contains d00dfeed         : no
 
 ---
 
+## 相关文档
+
+- [boot-order.md](boot-order.md) — 启动顺序、镜像自带引导程序、SPI 读不对（结论摘要）
+- [device-tree.md](device-tree.md) — 修复本身：板级 U-Boot dtsi 与 wildcard 优先级链
+- [build.md](build.md) — 17 项校验里后三批是怎么加出来的
+- [flashing.md](flashing.md) — 恢复路线的操作步骤
+- [README.md](../README.md) — 当前状态与进度
+
+---
+
 ## 方法论陷阱
 
 1. **"构建成功"不等于"能启动"。** 加校验项的标准应该是
@@ -432,7 +444,7 @@ dump contains d00dfeed         : no
    "U-Boot DRAM 拓扑无公开 DTS 可抄 → 不成立" 当时判错了一半：
    "U-Boot 复用主线 DTS"这句话没错，错在把"复用主线 DTS"当成了
    "U-Boot 侧已经没有板级描述要做"。区别只在于有没有去查那个环节本身。
-5. **危险路径要能只读地跑一遍。** 见 `FLASHING.md` 第 10 节那个 PowerShell 脚本：
+5. **危险路径要能只读地跑一遍。** 见 `docs/flashing.md` 第 10 节那个 PowerShell 脚本：
    管理员门禁把写盘那段挡在评审之外，于是两个 bug 一直没人看见，
    加了 `-Preview` 之后两分钟暴露。
 6. **shell 里注意同名变量。** `sh` 没有局部作用域，函数里用与顶层同名的计数器会

@@ -136,7 +136,7 @@
  * low-power clock present would look like.
  *
  * This is a conformance fix, not a tuning value. See
- * docs/WIFI-INVESTIGATION.md section 0.
+ * docs/wifi.md section 0.
  */
 &sdio_pwrseq {
 	clock-names = "ext_clock";

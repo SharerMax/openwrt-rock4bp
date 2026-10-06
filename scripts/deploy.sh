@@ -348,7 +348,7 @@ AFTER LOGIN
 
 WiFi: wlan0 is expected NOT to appear. The AP6256/BCM43456 uploads its firmware
 and then fails to start it. That is a chip/driver problem, not a defect in this
-port -- docs/WIFI-INVESTIGATION.md records what has been ruled out.
+port -- docs/wifi.md records what has been ruled out.
 
 IF THE BOARD WILL NOT BOOT
 
@@ -356,5 +356,5 @@ IF THE BOARD WILL NOT BOOT
   which the tty4/tty5 logs showed working twice.
   Last resort is Maskrom, which on THIS board needs the SPI flash pins shorted to
   GND first, because SPI's U-Boot takes over before Maskrom would otherwise be
-  reachable. Full procedure in FLASHING.md section 7.
+  reachable. Full procedure in docs/flashing.md section 7.
 EOF
