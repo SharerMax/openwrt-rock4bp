@@ -8,25 +8,46 @@
 # out of the box: the driver derives the firmware name from the SDIO chip ID
 # (0x4345 with chiprev bit 0x200 set) and then asks for exactly these files.
 #
-# PROVENANCE
+# PROVENANCE -- the three files come from two sources, deliberately.
 #
-#   RPi-Distro/firmware-nonfree, branch trixie, commit 3bab0f823f5b53150b76aab77093adef6655b920
-#   debian/added-firmware/brcm/{brcmfmac43456-sdio.bin,.txt,.clm_blob}
-#   Licence text extracted from debian/copyright in the same commit.
+#   brcmfmac43456-sdio.bin       RPi-Distro/firmware-nonfree, branch trixie,
+#   brcmfmac43456-sdio.clm_blob  commit 3bab0f823f5b53150b76aab77093adef6655b920
+#                               debian/added-firmware/brcm/
 #
-# That repository is used rather than fetched at build time because it is a
-# Debian source package for the non-free blobs, so the licence travels with the
-# files. The alternatives are worse:
+#   brcmfmac43456-sdio.txt       radxa/firmware, master, nvram_ap6256.txt
 #
-#   Debian's own firmware-nonfree tarball is 105 MB for one 483 KB file, and its
-#   20210315 revision no longer contains the 43456 blob at all.
+# The split is the point. The firmware blob has to come from a source whose
+# licence permits redistribution, and only RPi's repository both carries the
+# applicable agreement and states it. Radxa's carries no licence statement at
+# all, so it is used for the NVRAM -- a plain-text board configuration -- and not
+# for the blob.
 #
-#   armbian/firmware has the same files, but its README carries a blanket
-#   statement about the proprietary ones: "Redistribution is limited to
-#   non-commercial or usage-only contexts". An earlier revision of this package
-#   vendored blobs from there, which meant shipping a proprietary file from a
-#   repository that does not grant redistribution as a matter of policy. The
-#   blob here is proprietary, so that policy is about this file.
+# Why not simply ship what Armbian ships? Because its .bin is
+#
+#   brcmfmac43456-sdio.bin  3167956a...  482927 B  7.45.96.0
+#
+# whose only known source is armbian/firmware, and that repository's README says
+#
+#   "Redistribution is limited to non-commercial or usage-only contexts"
+#
+# Shipping it would undo the correction this package made earlier, when the blob
+# was moved off armbian/firmware for exactly that reason. linux-firmware does not
+# carry the 43456 blob at all and Debian's firmware-nonfree tarball no longer
+# contains it, so no redistributable source for 7.45.96.0 has been found.
+# 7.84.17.1 works, so the alignment costs nothing functionally: the port ships a
+# newer firmware build, from a source whose licence permits redistribution, with
+# the same NVRAM and the same clm_blob Armbian uses.
+#
+# Why the Radxa NVRAM rather than RPi's: both were verified working on hardware.
+# RPi's brcmfmac43456-sdio.txt describes a Raspberry Pi -- different PA
+# calibration, different boardflags3, and Bluetooth coexistence parameters
+# credited to Cypress. The Radxa file is the vendor's own for this module, and its
+# header records that it is a clone of Broadcom's bcm94345wlpagb_p2xx reference
+# design rather than calibration read from any one unit. That makes it the better
+# default for a Radxa board, even though neither file is per-module.
+#
+# The NVRAM's macaddr is not what reaches the interface: brcmfmac takes the MAC
+# from the chip's OTP, and wlan0 comes up as 08:fb:ea:65:f8:da under either file.
 #
 # LICENCE
 #
@@ -70,7 +91,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=brcmfmac-firmware-43456-sdio
 PKG_VERSION:=7.84.17.1
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=SYNAPTICS
 PKG_MAINTAINER:=ROCK 4B+ port <port@local>
 
@@ -86,7 +107,7 @@ PKG_MAINTAINER:=ROCK 4B+ port <port@local>
 
 FW436_SRCDIR:=$(CURDIR)/files
 FW436_SHA_BIN:=ddf83f2100885b166be52d21c8966db164fdd4e1d816aca2acc67ee9cc28d726
-FW436_SHA_TXT:=44e0bb322dc1f39a4b0a89f30ffdd28bc93f7d7aaf534d06d229fe56f6198194
+FW436_SHA_TXT:=66c71eb53b47c49d42386b66735134578640b0946f3f46e44f384fef5aacfd9e
 FW436_SHA_CLM:=2dbd7d22fc9af0eb560ceab45b19646d211bc7b34a1dd00c6bfac5dd6ba25e8a
 FW436_SHA_LIC:=bb50f9742753dc3befc72e8000efaa05f6f98a7c633129f7a7e0202ce1e487e0
 

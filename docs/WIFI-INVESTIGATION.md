@@ -183,7 +183,7 @@ of the three files.
 
 | File | Armbian ships | This port ships | Can they be aligned? |
 |---|---|---|---|
-| `brcmfmac43456-sdio.txt` | `66c71eb5…` 2099 B, AP6256 | `44e0bb32…` 2053 B, RPi | **yes** — plain text board configuration, no licensing constraint |
+| `brcmfmac43456-sdio.txt` | `66c71eb5…` 2099 B, AP6256 | `66c71eb5…` 2099 B | **aligned** |
 | `brcmfmac43456-sdio.clm_blob` | `2dbd7d22…` 7163 B | identical | already aligned |
 | `brcmfmac43456-sdio.bin` | `3167956a…` 482927 B, 7.45.96.0 | `ddf83f21…` 495898 B, 7.84.17.1 | **no** — see below |
 
@@ -200,19 +200,58 @@ the Synaptics EULA for these exact files. `linux-firmware` does not have the blo
 all, and Debian's `firmware-nonfree` tarball no longer contains it, so there is no
 redistributable source for 7.45.96.0 that has been found.
 
-7.84.17.1 works, so there is no functional cost to this. It does mean the port
-ships a *newer* firmware build than Armbian, from a source whose licence permits
-redistribution, with the same NVRAM and the same clm_blob.
+7.84.17.1 works, so there is no functional cost. The port ships a *newer* firmware
+build than Armbian, from a source whose licence permits redistribution, with the
+same NVRAM and the same clm_blob.
 
-**The NVRAM is the part worth aligning.** The port was shipping RPi's
-`brcmfmac43456-sdio.txt`, which is a Raspberry Pi's board profile — different PA
-calibration, different `boardflags3`, and Bluetooth coexistence parameters that
-happen to be credited to Cypress, the AP6256's own vendor. That is the wrong
-board's description. Armbian uses the AP6256 NVRAM and works.
+### Where the NVRAM came from, and a weaker argument than expected
 
-Whether the AP6256 NVRAM also works here *with the clock fixed* was the one
-genuinely open question left, and it is a single cold boot: same firmware, only
-the NVRAM changes.
+The natural source to reach for was `radxa/firmware`, the board vendor's own
+repository — the same provenance as the device tree this port inherits. It has
+`nvram_ap6256.txt`, and it is **byte-identical** to what Armbian loads:
+
+```
+66c71eb53b47c49d42386b66735134578640b0946f3f46e44f384fef5aacfd9e  2099 B
+```
+
+`armbian/firmware` and Armbian ship the same bytes, so the file has one content and
+several homes.
+
+The argument for preferring it over RPi's file is weaker than it first looked.
+RPi's describes a Raspberry Pi — different PA calibration, different `boardflags3`,
+Bluetooth coexistence parameters credited to Cypress — which is the wrong board.
+But the Radxa file's own header says:
+
+```
+#AP6256_NVRAM_V1.1_08252017
+# Cloned from bcm94345wlpagb_p2xx.txt
+```
+
+It is a clone of a **Broadcom reference design**, not calibration read from this
+module. So neither file is per-unit, and "PA calibration is board-specific" — which
+would have been the strong argument — does not apply to either. The argument that
+survives is weaker but sufficient: the vendor ships this one for this module, and it
+is verified working.
+
+Both files were verified on hardware with the clock fixed:
+
+| NVRAM | Result |
+|---|---|
+| RPi `44e0bb32…` 2053 B | `wlan0` UP, 16 networks scanned |
+| AP6256 `66c71eb5…` 2099 B | `wlan0` UP, 14 networks scanned |
+
+Both bring up the interface, and in both cases `wlan0` reports MAC
+`08:fb:ea:65:f8:da` — identical. So the `macaddr` line in the NVRAM never reaches
+the interface: brcmfmac takes the MAC from the chip's OTP. That also explains why
+the two files' different `macaddr` values never mattered.
+
+The package now ships the AP6256 file, taken from `radxa/firmware`. One caveat
+stated plainly: **that repository carries no licence statement at all.** For the
+NVRAM that is a weaker position than the firmware blob's, where an explicit EULA
+travels with the file. RPi's `debian/copyright` applies its Synaptics EULA to
+`debian/added-firmware/*/*43456*` by glob, which covers `.txt` files as well as
+`.bin` — so the community treats these text files as the same licensed material.
+That is the best available reading, but it is an inference, not a permission.
 Beyond those, the honest options are a kernel bisect or a newer kernel base, both
 large changes to an otherwise working port. They should not be attempted while the
 two cheap tests above are untried.
@@ -575,30 +614,22 @@ leaves no distinguishing trace. That has to come from the operator.
 
 ## 8. What is left
 
-Nothing blocking. WiFi works. The remaining items are tidying, not investigation:
+Nothing blocking. WiFi works, and the shipped NVRAM now matches Armbian's.
 
-1. **Decide whether to keep the RPi NVRAM as the shipped default.** The port ships
-   the RPi `brcmfmac43456-sdio.txt`, which got further during the failed period but
-   is a Raspberry Pi's board profile. Armbian works with the AP6256 NVRAM, and
-   combo 1 remains untested *with the clock fixed*. That is now the one genuinely
-   open question: **does the AP6256 NVRAM also work now?** It needs one cold boot
-   and it decides which file the package should ship, on licence as well as
-   correctness grounds — both are covered by the same Synaptics stanza, so it is a
-   functional question only.
-2. If the AP6256 NVRAM works, switch the package to it and note that the port then
-   ships byte-for-byte what Armbian ships.
-3. Optional: the RPi brcmfmac patches are still applied to this driver. They were
-   ruled out as the cause, and removing them is unrelated cleanup with its own
-   risk. Not worth doing on its own.
+1. **eMMC install.** Unrelated to WiFi, still pending. The `dd` procedure is
+   checked in FLASHING.md §7.
+2. HDMI and audio remain out of scope, as before.
 
-**Do not resume the firmware/NVRAM matrix as a search.** Combo 1 was demonstrated
-to be byte-identical to the configuration that works on this hardware, and it
-failed only because of the clock name. Further combinations of those files cannot
-produce information that the Armbian comparison did not already provide.
+The firmware/NVRAM matrix in §4 is kept as a record, not as a work list. Combo 1
+was demonstrated to be byte-identical to what Armbian loads, and it failed only
+because of the clock name; combos 2 through 6 tested a variable that was never the
+cause. Combos 4 and 6 were never run and there is no reason to run them now.
 
-Combos 4 and 6 were never tested and there is no reason to test them now.
+Optional cleanup, not worth doing on its own: OpenWrt still applies the eight
+Raspberry Pi brcmfmac patches to this driver. They were ruled out as the cause, and
+removing them is unrelated work with its own risk.
 
-## 9. The test harness, and the one test still worth running
+## 9. The test harness
 
 `scripts/wifi-test.sh` is retained. It is no longer a search tool, but three of its
 properties earned their keep and are worth keeping:
@@ -610,14 +641,15 @@ properties earned their keep and are worth keeping:
 * it encodes that `dmesg -C` does not work here and that `rmmod`/`modprobe` does
   not re-probe, so it never produces output that looks like data and is not.
 
-The one test still worth running is combo 1 — the AP6256 NVRAM, byte-identical to
-what Armbian ships — now that the clock is fixed. It decides what the package
-should ship.
+It is also how the final alignment was verified — combo 3, the AP6256 NVRAM with
+the shipping firmware, cold-booted and confirmed working. Any future firmware or
+NVRAM change should go through it rather than by hand, so that the installed state
+is always identified from the files rather than from memory.
 
 ```sh
 # from the serial console
 sh wifi-test.sh list          # combos and what has been recorded
-sh wifi-test.sh stage 1       # install the AP6256 NVRAM and verify hashes
+sh wifi-test.sh stage <n>     # install a combination and verify hashes
 poweroff
 # UNPLUG the supply, wait 10 s, power on
 sh wifi-test.sh check
