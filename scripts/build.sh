@@ -172,6 +172,15 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   check "u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)" \
     "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | grep -qE '^[[:space:]]*binman[[:space:]]*\\{'"
 
+  # The vdd_log rail. The kernel's own node for it has only a voltage range and
+  # no regulator-init-microvolt, so this is the only thing that sets it, and it
+  # is untested against the panic -- which is exactly why it needs an assertion
+  # rather than a comment. 950000 microvolts, asserted literally, because a node
+  # that silently reverted to a range-only definition would satisfy a weaker
+  # "there is a vdd_log" check.
+  check "u-boot dtb sets vdd_log to 950mV" \
+    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | tr -d ' \t' | grep -q 'regulator-init-microvolt=<0xe7ef0>'"
+
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
 

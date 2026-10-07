@@ -85,6 +85,40 @@
  * that currently cannot boot, only the two things the build and the TPL actually
  * ask for should change.
  *
+ * ADDED 2026-10-08: &vdd_log { regulator-init-microvolt = <950000> }
+ *   Once the board booted, this stopped being "not what is missing here".  That
+ *   file is a long-standing omission on my part rather than a considered
+ *   decision, and both files it would have pulled this from set the rail:
+ *   rk3399-rock-pi-4-u-boot.dtsi and Radxa's own rk3399-rock-4c-plus-u-boot.dtsi
+ *   both carry it.
+ *
+ *   Why it can matter: the kernel's own node for this rail, in
+ *   rk3399-rock-pi-4.dtsi, is a pwm-regulator with regulator-always-on and only
+ *   regulator-min/max-microvolt (800000..1400000) -- no regulator-init-microvolt.
+ *   So nothing in the kernel picks a voltage; whatever U-Boot left is what the
+ *   kernel keeps.  An unset PWM regulator is not obviously a valid operating
+ *   point for the CPU and DDR logic rails.
+ *
+ *   What it is being tried against: this bootloader boots the board six times and
+ *   panics the kernel on three, always with a function pointer aimed at
+ *   non-code, while Armbian's TPL boots it every time with the same kernel,
+ *   device tree and rootfs.  DRAM initialisation has been ruled out by
+ *   experiment -- 0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch
+ *   makes this bootloader's DRAM sequence identical to Armbian's and the fault
+ *   survives, reproducing the same corrupted pointer, 0xdfff800080099ee4.
+ *   UNVERIFIED.  A wrong rail voltage is a plausible way to corrupt memory
+ *   intermittently in the first second of kernel boot, and it is untested
+ *   here; one boot would prove nothing, the threshold is six clean ones.
+ *
+ * NOT INCLUDED, deliberately, so a failure above is informative:
+ *   &sdhci { cap-mmc-highspeed; mmc-ddr-1_8v; mmc-hs200-1_8v; }
+ *       Affects eMMC, which already reaches HS400 and mounts rootfs.  No
+ *       mechanism for corrupting memory.
+ *   / { leds { led-0 { default-state = "on"; }; }; }
+ *       Cosmetic.
+ *   Adding either alongside the vdd_log change would mean a failure could not
+ *   be attributed, and these are cheap to add afterwards.
+ *
  * No spi1/flash@0 node is added either.  SPI boot on this board goes through
  * CONFIG_ROCKCHIP_SPI_IMAGE rather than the MMC-style flash node lookup, and the
  * working nanopc-t4 .dtb contains no flash@0 node either.
@@ -92,3 +126,7 @@
 
 #include "rk3399-u-boot.dtsi"
 #include "rk3399-sdram-lpddr4-100.dtsi"
+
+&vdd_log {
+	regulator-init-microvolt = <950000>;
+};
