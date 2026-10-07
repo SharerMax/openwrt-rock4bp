@@ -1,6 +1,6 @@
 # 构建
 
-构建环境、目录结构、构建流程、包集合、22 项校验、产物与可复现性。
+构建环境、目录结构、构建流程、包集合、23 项校验、产物与可复现性。
 
 ---
 
@@ -64,7 +64,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         manifest + 构建后 22 项校验
+  build.sh                                         manifest + 构建后 23 项校验
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
   check-patch-sources.sh                           三个补丁源与生成的补丁逐一比对
@@ -112,7 +112,7 @@ spi-working-armbian.bin                            从板上读到的 SPI dump
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 22 项校验     ← 不是装饰
+4. 构建后 23 项校验     ← 不是装饰
 ```
 
 日志写到 `/tmp/build-full.log`，结尾打印校验块、`REAL_EXIT_CODE` 和日志年龄。
@@ -138,7 +138,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 
 ---
 
-## 22 项构建后校验
+## 23 项构建后校验
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -160,6 +160,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  u-boot dtb is newer than the patch that builds it
   OK/FAILED  u-boot dtb carries the RK3399 DRAM parameters (rockchip,sdram-params)
   OK/FAILED  u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)
+  OK/FAILED  u-boot dtb sets vdd_log to 950mV
   OK/FAILED  both idbloader variants built
   OK/FAILED  0103 applied: no early LPDDR4 rate switch ahead of the channel loop
   OK/FAILED  0103 applied: both controllers switched after the configuration
@@ -169,7 +170,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  the image embeds that bootloader at LBA 0x40
 ```
 
-（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印 25 行 ——
+（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印 26 行 ——
 `grep -c 'check "' scripts/build.sh` 数的是语句位置，不是执行次数。）
 
 ### ⚠️ 有三类补丁，护法不一样
@@ -190,6 +191,25 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 把删掉的块塞回去、两次调用合并成一次、以及文件本身不存在，三种情况都会让它们失败。
 （这一步不能省：仓库里已经有过一个对所有文件都报"没找到"的检查器，
 和坏掉的检查器在输出上长得一模一样。）
+
+### 这条断言当场抓到了它自己要防的事
+
+`u-boot dtb sets vdd_log to 950mV` 加进去之后，**第二次运行就失败了** ——
+而属性明明在 dtsi 里、也在补丁 payload 里。
+
+原因不在构建：是我写的一个对照脚本（想比较「加 override」和「不加 override」两种
+dtb）改了构建树里的 dtsi，`make` 失败（直接跑 `make` 用的是宿主 gcc，缺交叉编译
+环境），而脚本用了 `set -e`，**在 restore 之前就被杀掉了**。构建树里少了那 5 行，
+下一次构建忠实地产出一个没有该属性的 dtb，**全过程没有任何警告**。
+
+⚠️ **被破坏的构建树会产出一个看起来完全正常的构建。** 只有对编译产物做内容断言才看得出来。
+
+⚠️ **所以：会改构建树的脚本，失败路径也必须恢复。** 别指望 `set -e` 之后的代码还会跑 ——
+把恢复放进 `trap`，或者干脆别在构建树里做实验（用副本）。
+
+⚠️ 顺带：这个断言第一次失败是**我自己的算术错** —— 950000 是 `0xE7EF0`，
+我写成了 `0xE8A40`。**断言写错和被测物坏掉，输出上看起来一模一样**，
+这也是为什么负控制要单独跑。
 
 ### 分三批加的，因为犯的错不同
 

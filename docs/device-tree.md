@@ -189,8 +189,63 @@ binman: Device tree './u-boot.dtb' does not have a 'binman' node
 
 **参数选 `lpddr4-100` 的依据**：本板是 **64 位双通道 LPDDR4 @3200Mb/s**（Radxa 官方
 spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文件。
-没有走 `rk3399-rock-pi-4-u-boot.dtsi`，因为它还会顺带加上 `&sdhci` 时序覆盖和
+没有走 `rk3399-rock-pi-4-u-boot.dtsi`，当时的理由是它还会顺带加上 `&sdhci` 时序覆盖和
 `leds` 节点 —— eMMC 本来就能跑到 HS400，缺的只有 DRAM 参数。
+
+> ⚠️ **这个理由后来被证明覆盖得太宽** —— 见下面那一节。
+
+## ⚠️ 那句「不 include rock-pi-4 的 dtsi」覆盖得太宽了
+
+板级 dtsi 里原来写着：不 include `rk3399-rock-pi-4-u-boot.dtsi`，因为它会顺带加上
+`&sdhci` 时序覆盖和 `leds` 节点 —— eMMC 本来就能跑到 HS400，缺的只有 DRAM 参数。
+
+**这句推理覆盖了整个文件，于是 `&vdd_log` 被顺带丢掉了，从来没单独看过。**
+而它恰恰是要紧的那一项：
+
+```c
+&vdd_log {
+	regulator-init-microvolt = <950000>;
+};
+```
+
+**为什么要紧**：内核侧的 `vdd_log` 节点在 `rk3399-rock-pi-4.dtsi` 里是
+pwm-regulator、`regulator-always-on`，只有 `regulator-min/max-microvolt`
+（800000～1400000），**没有 `regulator-init-microvolt`** ——
+所以**内核不会选电压，U-Boot 留下什么就是什么**，而当时我们没设。
+
+设成 950mV 的两处依据都不是我们发明的：`rk3399-rock-pi-4-u-boot.dtsi`，
+以及 Radxa 自家同规格兄弟板的 `rk3399-rock-4c-plus-u-boot.dtsi`。
+
+⚠️ **这仍是未验证的候选，不是已确认的修复。** 它是在 DRAM 初始化被实验排除之后
+剩下的下一个假设。见 [postmortem-dram-instability.md](postmortem-dram-instability.md)。
+
+⚠️ **`&sdhci` 和 `leds` 仍然不加** —— 一次只改一个变量，否则失败无法归因。
+
+### ⚠️ 一个看着像空操作、实际不是的坑
+
+`vdd_log` 这个 label **在 U-Boot 的 RK3399 dtsi 链里根本不存在** ——
+定义只在 rk3288、rk3368、px30、rk3229 和 `rk3399-rock960-u-boot.dtsi` 里。
+第一反应是「这行没用」。
+
+**它是有效的。** 这个 recipe 的 U-Boot 控制 FDT 是
+**内核编译好的 dtb + 我们的 `-u-boot.dtsi`** 合并出来的
+（`dts/.dt.dtb.cmd` 里是 `cat dts/upstream/src/arm64/rockchip/…dtb`），
+`vdd_log` 节点来自内核侧的 `rk3399-rock-pi-4.dtsi`，所以引用能解析。
+
+验证方式是**比两个 dtb**，不是读源码：
+
+| | 内核 dtb 的 `vdd-log` | U-Boot dtb 的同一个节点 |
+|---|---|---|
+| `regulator-init-microvolt` | **无** | `<0xe7ef0>` = 950000 |
+
+内核 dtb 命中 0 次、U-Boot dtb 命中 1 次，而 U-Boot 侧唯一的来源就是这个 override。
+
+### ⚠️ 所以两条断言盯这个属性
+
+`build.sh` 断言编译出的 `u-boot.dtb` 里 `regulator-init-microvolt` 字面等于
+`0xe7ef0`。**断言写错和被测物坏掉，输出看起来一模一样** —— 这条断言第一次失败
+是我把 950000 算成 `0xE8A40`（正确是 `0xE7EF0`），第二次失败是真的：构建树被一个
+测试脚本破坏了。所以负控制要单独跑，理由见 [build.md](build.md)。
 
 ---
 
@@ -218,6 +273,6 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 ## 相关文档
 
 - [hardware.md](hardware.md) — 硬件事实与继承到的值
-- [build.md](build.md) — 构建流程、manifest、22 项校验
+- [build.md](build.md) — 构建流程、manifest、23 项校验
 - [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) — 缺 sdram-params 导致的变砖
 - [wifi.md](wifi.md) — WiFi 的完整排查记录

@@ -456,7 +456,7 @@ dump contains d00dfeed         : no
 - [postmortem-dram-instability.md](postmortem-dram-instability.md) — **修好之后发现的随机 panic（当前最高优先级）**
 - [boot-order.md](boot-order.md) — 启动顺序、镜像自带引导程序、SPI 读不对（结论摘要）
 - [device-tree.md](device-tree.md) — 修复本身：板级 U-Boot dtsi 与 wildcard 优先级链
-- [build.md](build.md) — 22 项校验里几批是怎么加出来的
+- [build.md](build.md) — 23 项校验里几批是怎么加出来的
 - [flashing.md](flashing.md) — 恢复路线的操作步骤
 - [README.md](../README.md) — 当前状态与进度
 

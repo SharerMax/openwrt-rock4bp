@@ -66,32 +66,56 @@
 > **内存被写坏或读坏 → 指针被污染 → 取指失败。** 故障点每次都在不同位置
 > （`mmc_rescan` 工作线程 / idle 路径 / I2C 中断），这种随机性是硬件类故障的特征。
 >
-> ### 补丁已上机测过 —— **没修好，但排除了 DRAM 初始化**
+> ### ❌ 实验一：升频时机 —— **没修好，但排除了 DRAM 初始化**
 >
 > `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
-> （`idbloader.img` `7c65ea03…`，22 项校验全过）已刷入 eMMC 测过：
-> **2 次启动，2 次 panic。**
->
+> 已刷入 eMMC 测过：**2 次启动，2 次 panic。**
 > 补丁做的事：删掉通道循环前那次 `lpddr4_set_rate(dram, params, 0)`，
 > 并把尾部那一次 `set_rate_index` 变成 ctl0、ctl1 各一次 —— 恢复 v2022.07 的顺序。
+>
+> 串口确认补丁生效（`50MHz` 变成在 `lpddr4_set_rate` **之前**打印），而 tty13 第二次
+> 启动与 tty12 **完全同源** —— 同样的 ESR、同样的 PC `0xdfff800080099ee4`、
+> 同样的 `lr: __wake_up_common+0x8c`、同样的 `rk3x_i2c_irq+0x198`。
+>
+> **⇒ DRAM 初始化被排除。** ⚠️ 补丁暂时保留（两边 DRAM 序列一致，后续对比才只剩
+> 一个变量），但它偏离上游，不需要时就该删。
+>
+> ### 🧪 实验二（进行中）：`&vdd_log` 电压 —— **已构建，等上机**
+>
+> 改动只有一行，在板级 `-u-boot.dtsi` 里（不是新补丁，是改 0102 的 payload）：
+>
+> ```c
+> &vdd_log {
+> 	regulator-init-microvolt = <950000>;
+> };
+> ```
+>
+> **为什么是它**：内核侧 `vdd_log` 节点（`rk3399-rock-pi-4.dtsi`）是 pwm-regulator、
+> `regulator-always-on`，只有 `regulator-min/max-microvolt`（800000～1400000），
+> **没有 `regulator-init-microvolt`** —— 所以**内核不选电压，U-Boot 留下什么就是
+> 什么**，而我们没设。上游 `rk3399-rock-pi-4-u-boot.dtsi` 和 Radxa 自家
+> `rk3399-rock-4c-plus-u-boot.dtsi`（同规格兄弟板）**都设成 950mV**。
+>
+> ⚠️ **这不是深思熟虑的省略，是一句推理带过的。** 板级 dtsi 原来写着
+> 「不 include rock-pi-4 的 dtsi，因为它的 `&sdhci` 时序和 `leds` 不是缺的东西」
+> —— 那句话覆盖整个文件，`&vdd_log` 就顺带被丢掉了。
+>
+> ⚠️ **只加这一项**，`&sdhci` 和 `leds` 故意不加 —— eMMC 已经跑 HS400 且挂上 rootfs，
+> leds 是装饰性的，都没有损坏内存的机制。加进去失败就无法归因。
 >
 > | | 值 |
 > |---|---|
 > | `idbloader.img` | `7c65ea03783a614c…` |
-> | ext4 镜像 gz | `d15f566f56491301…`，12811095 字节 |
-> | 构建后校验 | **22 项全过**（新增 3 条盯这个补丁） |
-> | 上机结果 | ❌ **2/2 panic** |
+> | `idbloader-spi.img` | `d3244a0239605349…` |
+> | `u-boot.itb` | `d466c390c57eaa5d…` |
+> | ext4 镜像 gz | `bd3a6112cb6abca7…`，12811784 字节 |
+> | 构建后校验 | **23 项全过** |
+> | 上机结果 | ⏳ **未测** —— 需 Maskrom 刷入，判据 6 次连续零 panic |
 >
-> ⚠️ **这个改动在产物里完全看不见**（打或不打都是 192512 字节），所以断言直接打在
-> 实际编译的源码上，并且做过负控制验证。
+> ⚠️ **完全未验证，我没有把握说它会修好。** 它只是「DRAM 排除之后剩下的、
+> 我们早期顺带省略的、上游和 Radxa 官方都设了」的那一项。
 >
-> ⚠️ **还没验证的是修复效果，不是补丁是否生效。** 串口里 `50MHz` 变成在
-> `lpddr4_set_rate` 之前打印，说明补丁确实生效了 —— 只是故障照旧。
->
-> ⚠️ **只能恢复到 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
-> 它的 banner 是 `2022.07_armbian-…`，自带补丁，参数与我们不同。
->
-> ### DRAM 三个假设全部排除，剩一个差异
+> ### 逐层比对：四个假设的结论
 >
 > 拿到 U-Boot **v2022.07** 源码（Armbian 那版）逐层比对：
 >
@@ -103,43 +127,23 @@
 > | 驱动代码大改 | ❌ 93 KB 的文件只差 +64/−48 行（3%） |
 > | `cs0_high16bit_row` 被新调用同步（`Row=16/15` vs `Row=16`） | ❌ 该字段在 RK3399 路径里**只用于打印** |
 >
-> ⚠️ **"配置写入时的实际频率不同"是真的** —— 我中途撤回过一次，那是错的，已撤回那个撤回。
-> 串口上 `50MHz` 在前、`400MHz` 在前，**如实反映了当时的状态**：Armbian 还在低频时
-> 打印并配置，我们已经切到 400MHz 才打印并配置。
-> 我们的 dtsi 里 `base.ddr_freq = 50`（扁平数组下标 34，由结构体总长
-> `34+5+332+200+959 = 1530` 与 dtsi 的 u32 总数吻合，`num_channels=2`、`stride=13`、
-> `odt=1` 三个锚点全部与 `.inc` 一致）。
+> **剩下的唯一差异**（v2025.10 把切 400MHz 提前到了配置写入之前）**也已由实验一排除**。
 >
-> ⚠️ **我一度把它解成 80，那是解析脚本的 bug**，并且这个错数字还进了补丁头和文档。
-> 串口打印 `50MHz` 本身就是它正确的证据。
+> ⚠️ 两个我自己的更正，别被文档里的旧说法误导：
 >
-> ⚠️ **但 Armbian 的参数确实与我们不同** —— 它的 banner 带 `armbian` 补丁后缀
-> （`2022.07_armbian-2022.07-Se092-…`），它自己打的补丁不在我们手上。
-> **所以能恢复的是 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
+> - **"配置写入时的实际频率不同"是真的** —— 我中途撤回过一次，那是错的。
+>   串口上 `50MHz` 在前、`400MHz` 在前，如实反映了当时的状态。本板
+>   `base.ddr_freq = 50`（扁平数组下标 34，由结构体总长 `34+5+332+200+959 = 1530`
+>   与 dtsi 的 u32 总数吻合，`num_channels=2`、`stride=13`、`odt=1` 三个锚点全部
+>   与 `.inc` 一致）。**我一度把它解成 80，那是解析脚本的 bug**，错数字还进了补丁头。
+> - **Armbian 的参数与我们不同** —— banner 带 `armbian` 补丁后缀，它自己打的补丁
+>   不在我们手上。**能恢复的是 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
 >
-> ### ❌ 实验结果：不是 DRAM 初始化
+> **下一步**：① Maskrom 刷入实验二的镜像，跑 6 次（判据：6 次连续零 panic，
+> 一次不算）→ ② 拿 Armbian 真正的 `u-boot.itb`/`idbloader.img` 做语义级设备树比对 →
+> ③ 若有实物 TTL 适配器接 UART2，价值最大 —— 现在缺的是 TPL/SPL 自己的输出。
+> 详见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
 >
-> 上面那个唯一差异做成了补丁 `0103-…` 并上机测了。**2 次启动，2 次 panic，没修好。**
->
-> 补丁确实生效（串口里 `50MHz` 变成在 `lpddr4_set_rate` 之前打印），而 tty13 第二次启动
-> 与 tty12 **完全同源** —— 同样的 ESR、同样的 PC `0xdfff800080099ee4`、同样的
-> `lr: __wake_up_common+0x8c`、同样的 `rk3x_i2c_irq+0x198`。
->
-> **⇒ DRAM 初始化被排除。** 剩下的是引导程序别处的差异。
-> ⚠️ 补丁暂时保留（留着它两边 DRAM 序列才一致，后续对比才只有一个变量），
-> 但它**偏离上游**，下一个实验若不需要就该删掉。
->
-> **唯一找到的实质差异**：v2025.10 把 LPDDR4 切到 400MHz 的时机**提前到了配置写入之前**
-> （`set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` / `dram_all_config`）。
-> v2022.07 是在 dtsi 频率下配完，最后才升频。⚠️ 这是上游 mainline 的代码，
-> 直接回退可能让别的板子坏掉 —— 但它是第一个值得做的受控实验。
->
-> **下一步**（按优先级）：① 把 Armbian TPL + eMMC 补到 6 次（最便宜，只重启）→
-> ② 填"本移植 TPL 引导 U 盘"那格 → ③ 做升频时机实验 → ④ 拿到 Armbian 真正的
-> `u-boot.itb`/`idbloader.img` 做语义级设备树比对。
->
-> 完整记录见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
-
 ---
 
 ## 文档地图
@@ -150,7 +154,7 @@
 |---|---|
 | [docs/hardware.md](docs/hardware.md) | 硬件事实、板型辨识、40-pin、版本差异、按键、介质 |
 | [docs/device-tree.md](docs/device-tree.md) | 设备树策略、继承 dtsi ≠ 继承 board、U-Boot 板级 dtsi、dtc 坑 |
-| [docs/build.md](docs/build.md) | 构建环境、目录结构、22 项校验、包集合、产物、可复现性 |
+| [docs/build.md](docs/build.md) | 构建环境、目录结构、23 项校验、包集合、产物、可复现性 |
 | [docs/flashing.md](docs/flashing.md) | 烧卡、首次启动该看什么、eMMC 安装、Maskrom |
 | [docs/boot-order.md](docs/boot-order.md) | SPI → eMMC → SD、镜像自带引导程序、SPI 读不对 |
 | **故障记录** | |
@@ -301,16 +305,16 @@
       并与 v2022.07 逐层比对排除三个假设
 - [x] Phase 5n：补齐对照组 —— Armbian TPL + eMMC 连测 6 次（连之前共 7 次零 panic），
       **变量收敛到只剩引导程序**
-- [ ] **Phase 5m（最高优先级）：修 DRAM 初始化** —— 6 次启动 3 次 panic，镜像因此
-      不能算可交付。补丁 `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
-      **已上机测过：2 次启动 2 次 panic，没修好**（`idbloader.img` `7c65ea03…`，
-      22 项校验全过，3 条新断言经过负控制验证）。
-      **但它排除了 DRAM 初始化** —— 现在两边 DRAM 序列一致而故障依旧。
-      ⚠️ 补丁暂时保留（让后续对比只剩一个变量），但它偏离上游，不需要时就该删。
-      下一个候选：我们板级 dtsi 省略的 override，其中
-      `&vdd_log { regulator-init-microvolt = <950000>; }` 最可疑 ——
-      内核侧 `vdd_log` 节点只有电压范围、没有 init 值，所以 U-Boot 留下什么就是什么。
-      **未验证**
+- [x] Phase 5m-1：DRAM 初始化 —— 补丁 `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
+      **已上机测过：2 次启动 2 次 panic，没修好**。**但它排除了 DRAM 初始化**
+      —— 现在两边 DRAM 序列一致而故障依旧，tty13#2 与 tty12 完全同源。
+      ⚠️ 补丁暂时保留（让后续对比只剩一个变量），但它偏离上游，不需要时就该删
+- [ ] **Phase 5m-2（最高优先级，等上机）：测 `&vdd_log` 电压**
+      —— 6 次启动 3 次 panic，镜像不能算可交付。改动只有一行
+      `&vdd_log { regulator-init-microvolt = <950000>; }` 加在板级 `-u-boot.dtsi` 里，
+      `idbloader.img` `7c65ea03…`、23 项校验全过、新断言经正负控制验证。
+      **已构建完成，未上机。** 需 Maskrom 刷入，判据 **6 次连续零 panic，一次不算**。
+      ⚠️ 我没有任何把握说它会修好 —— 它只是 DRAM 排除后剩下的下一个候选
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）

@@ -103,18 +103,37 @@ function pointer pointing at non-code. See
   bootloaders share one DRAM sequence and future comparisons have a single variable,
   not because it fixes anything. It diverges from upstream: delete it when it stops
   earning its place.
-- **What is left is elsewhere in the bootloader.** The board dtsi overrides this port
-  omits while both `rk3399-rock-pi-4-u-boot.dtsi` and Radxa's own
-  `rk3399-rock-4c-plus-u-boot.dtsi` carry them are the next thing: `&sdhci` timing,
-  `&vdd_log { regulator-init-microvolt = <950000>; }`, and a `leds` node. The vdd_log
-  one matters because the kernel's own node in `rk3399-rock-pi-4.dtsi` has only a
-  voltage range and no `regulator-init-microvolt`, so whatever U-Boot leaves is what
-  the kernel keeps. **Untested.**
+- **What is left is elsewhere in the bootloader, and the next experiment is built and
+  waiting.** The board dtsi override this port omits: `&vdd_log {
+  regulator-init-microvolt = <950000>; }`. It matters because the kernel's own node in
+  `rk3399-rock-pi-4.dtsi` is a pwm-regulator with only `regulator-min/max-microvolt`
+  and no `regulator-init-microvolt` — so whatever U-Boot leaves is what the kernel
+  keeps, and this port left nothing. Upstream `rk3399-rock-pi-4-u-boot.dtsi` and
+  Radxa's own `rk3399-rock-4c-plus-u-boot.dtsi` both set it. **Untested.** Only that
+  one property was added; `&sdhci` and the `leds` node stay out so that a failure is
+  attributable. Build with `scripts/build.sh`, flash with maskrom, and the verdict is
+  six clean boots — not one.
+- **The omission was an accident, not a decision.** The dtsi said it was skipping
+  `rk3399-rock-pi-4-u-boot.dtsi` because its `&sdhci` timing and `leds` node were not
+  what was missing. That reasoning covered the whole file, and `&vdd_log` went with it
+  without ever being looked at separately. **A general argument about a file is not a
+  reason about every item in it.**
+- **A `&label` absent from the U-Boot tree may still resolve.** `vdd_log` is defined
+  nowhere in U-Boot's RK3399 dtsi chain — only in the rk3288, rk3368, px30, rk3229
+  trees and in `rk3399-rock960-u-boot.dtsi`. The override works anyway, because this
+  recipe builds the U-Boot control FDT from the kernel's own dtb plus the
+  `-u-boot.dtsi`, and the node comes from the kernel side. Settle it by comparing the
+  two dtbs rather than by reading source: the kernel's has no init value, U-Boot's has
+  0xe7ef0.
+- **A test script that edits the build tree must restore it on the failure path too.**
+  `set -e` kills it before the restore, the tree keeps the edit, and the next build
+  faithfully produces output missing the change — with no warning anywhere. Use `trap`,
+  or work on a copy. It happened here, and the only thing that caught it was an
+  assertion on the compiled output.
 - **Do not assume mainline v2022.07 is what Armbian runs.** Its banner is
   `2022.07_armbian-…`, it patches its own U-Boot, and its parameters differ from
-  ours — it prints a 50MHz init rate and no 50 exists anywhere in our parameter array.
-  Those patches are not available, so mainline v2022.07 ordering is the closest we can
-  get, not the same thing.
+  ours. Those patches are not available, so mainline v2022.07 ordering is the closest
+  we can get, not the same thing.
 - **Count your variables before claiming a cause.** The tty11-vs-tty12 comparison changed
   the bootloader *and* the boot medium at the same time; they were perfectly collinear, so
   it did not support "the TPL is at fault". As of 2026-10-08 both columns have been run
@@ -129,7 +148,6 @@ function pointer pointing at non-code. See
 - **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`), which leaves the working SPI
   bootloader alone. Prefer it over writing SPI.
 - **Do not propose an upstream PR** until this is fixed.
-
 ## Board facts worth knowing before you touch the device tree
 
 - Boot order is **SPI → eMMC → SD**. A working SPI bootloader always wins, so a masking
