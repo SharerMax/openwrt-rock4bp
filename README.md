@@ -35,22 +35,20 @@
 > | **内核 panic** | **3** | **0** |
 > | 日志早断（无法判定死活） | 2 | 2 |
 >
-> ### 对照实验 —— ⚠️ 有两个变量，不是一个
+> ### 对照实验 —— 变量已经收敛到一个
 >
-> ```
-> tty11  Armbian TPL → 引导 U 盘 → VFS: Mounted root (ext4) on device 8:2 → 进 shell
-> tty12  本移植 TPL → 引导 eMMC → 0.54 秒 panic
-> ```
+> 最初那次对照（tty11 vs tty12）**有两个共变变量**：引导程序换了，**引导介质也换了**，
+> 所以当时无法区分是谁的问题。10-08 把 eMMC 那一列补齐之后，只剩一个变量：
 >
-> 同一份内核、同一份 dtb（63877 字节，两边 crc32+sha1 哈希完全相同）、同一个 rootfs ——
-> 这部分硬。但**引导介质同时换了**，两个维度与引导程序**完全共变**：
->
-> | | 从 U 盘引导 | 从 eMMC 引导 |
+> | 引导介质：eMMC | Armbian U-Boot | 本移植 U-Boot |
 > |---|---|---|
-> | Armbian U-Boot | 6 次，0 panic | 1 次，通（10-08 补） |
-> | 本移植 U-Boot | 从未测过 | 6 次，3 panic |
+> | 启动次数 | **7** | 6 |
+> | **内核 panic** | **0** | **3** |
 >
-> ⚠️ 所以这次对照**不能**区分是 TPL 的问题还是从 eMMC 引导的问题。**根因未定位。**
+> （从 U 盘引导那一列 Armbian 也有 6 次零 panic，本移植从未测过，且该格实测走不通：
+> boot ROM 不跳过 SPI，板载 SD 卡槽排第三，要让 U 盘赢就得破坏现有恢复路径。）
+>
+> ⚠️ 剩下要靠实验回答的是**为什么**，不是"是不是"。**根因未定位。**
 >
 > ### 症状：函数指针被指向垃圾地址
 >
@@ -126,7 +124,7 @@
 | 外设 | 状态 | 关键证据 |
 |---|---|---|
 | 启动（Armbian 引导程序，**从 U 盘**） | ✅ 稳定 | microSD（USB 读卡器）引导 → `/boot.scr` → `Linux-6.12.94` kernel FIT + `radxa_rock-4b-plus` dtb 63877 B，crc32+sha1 通过 → `procd: - init -`。**6 次启动零 panic**（tty6/tty11 挂上 root，tty4/tty5 到 shell） |
-| 启动（Armbian 引导程序，**从 eMMC**） | ⚠️ 仅 1 次 | Armbian 26.11.0 / Linux 6.18.54，`root=UUID=7043da66-…`、`ubootpart=d2a80aa7-01`，dmesg 无内存错误。**只跑了 1 次，不足以作对照组** |
+| 启动（Armbian 引导程序，**从 eMMC**） | ✅ 稳定 | Armbian 26.11.0 / Linux 6.18.54，`root=UUID=7043da66-…`、`ubootpart=d2a80aa7-01`。**7 次零 panic**（10-08 连测 6 次，每次 boot_id 都变、`dmesg` oops/panic 计数为 0、`MemTotal` 一致）。⚠️ 无串口，所以是"内核每次都起来"，不是"TPL 每次都正确" |
 | **启动（本移植引导程序，从 eMMC）** | ⚠️ **不稳定** | 同一条链路跑通，但 6 次里 1 次挂上 root（tty8）、3 次 panic（tty8/tty10/tty12）、2 次日志早断。**根因未定位**，见顶部状态节 |
 | 身份 | ✅ | `model: Radxa ROCK 4B+`、`board_name: radxa,rock-4b-plus` |
 | **以太网** | ✅ 1Gbps | `Link is Up - 1Gbps/Full - flow control rx/tx` → `br-lan: ... forwarding state` |
@@ -160,13 +158,15 @@
 **本移植 U-Boot 的随机 panic 是唯一还没解决的问题**，而且它比别的都重要 ——
 引导程序不稳定意味着镜像不能算可交付。
 
-⚠️ **根因未定位。** DRAM 参数、DRAM 的 CONFIG、板级 dtsi 已确认与 Armbian 逐字节
-相同，唯一找到的差异是 **LPDDR4 升频时机**。而且上次那个对照实验有**两个共变变量**
-（引导程序 + 引导介质），所以"是 TPL 的问题"这句话本身也没有证据。
-**先补对照，再改代码** —— 详见
-[docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
+**对照组已经补齐**（10-08）：两列都从 eMMC 引导，Armbian 7 次零 panic、本移植 6 次
+3 panic，**唯一变量是引导程序本身**。所以"是本移植引导程序的问题"现在有证据了。
 
-**eMMC 安装**已验证（Maskrom 写整包 tty8 挂上 root；Armbian 从 eMMC 引导 1 次通），
+⚠️ **但"为什么"仍未定位。** DRAM 参数、DRAM 的 CONFIG、板级 dtsi 已确认与 Armbian
+逐字节相同，唯一找到的差异是 **LPDDR4 升频与训练的时机**（新增一次 PHY 配置 + 训练，
+跑在配置写入之前）。下一步是把它挪回去重建，跑 6 次 —— 这是改上游代码，必须可回退。
+详见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
+
+**eMMC 安装**已验证（Maskrom 写整包 tty8 挂上 root；Armbian 从 eMMC 引导 7 次零 panic），
 `dd` 流程另见 [docs/flashing.md](docs/flashing.md)。
 
 ⚠️ **eMMC 上现在是 Armbian**（2026-10-08 重装，单个 28.6 GB ext4，
@@ -246,9 +246,13 @@
 - [x] Phase 5g：**本移植的 U-Boot 上真机复验** —— Maskrom 写入 eMMC 后首次执行，
       `rockchip,sdram-params` 修复**确认生效**（两通道各 2048MB）
 - [x] Phase 6：eMMC 安装验证 —— **已通过**（tty8 从 `mmc@fe330000` 挂上 root）
-- [x] Phase 5l：诊断随机 panic —— 12 次启动对照实验，根因缩小到 DRAM 初始化
+- [x] Phase 5l：诊断随机 panic —— 12 次启动对照实验；**随后推翻了自己的归因**，
+      并与 v2022.07 逐层比对排除三个假设
+- [x] Phase 5n：补齐对照组 —— Armbian TPL + eMMC 连测 6 次（连之前共 7 次零 panic），
+      **变量收敛到只剩引导程序**
 - [ ] **Phase 5m（最高优先级）：修 DRAM 初始化** —— 6 次启动 3 次 panic，镜像因此
-      不能算可交付。需先拿到 Armbian 的 U-Boot 源码比对，**不要凭猜测改参数**
+      不能算可交付。已定位到唯一差异（LPDDR4 升频+训练的时机），下一步是可回退地
+      把它挪回配置写入之后，重建并跑 6 次
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）

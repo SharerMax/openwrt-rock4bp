@@ -111,21 +111,32 @@ tty12  本移植 TPL 2025.10-OpenWrt   → 引导 eMMC  → 0.54 秒 panic
 
 ### 后来补上的一个格子
 
-2026-10-08：eMMC 上重装了 Armbian，**从 SPI 里的 Armbian U-Boot 引导 eMMC 成功**
-（`root=UUID=7043da66-…`，`ubootpart=d2a80aa7-01`，dmesg 无内存错误）。
-所以"Armbian TPL + eMMC 引导"是通的 —— 但只跑了 1 次，**离 6 次的判据还差得远**。
+2026-10-08：eMMC 上重装了 Armbian，**从 SPI 里的 Armbian U-Boot 引导 eMMC 成功**，
+连测 **6 次全部通过**：
 
-⚠️ 这只是 1 次。要用它当对照，得重复到 6 次以上（见文末「下一步」）。
+```
+6/6   boot_id 每次都变（新内核实例，不是假重启）
+      root=UUID=7043da66-… ubootpart=d2a80aa7-01     ← 确认来自 eMMC
+      MemTotal: 3945008 kB                            ← 每次一致
+      dmesg bad (oops/panic/Internal error/BUG): 0      ← 每次都是 0
+```
+
+所以 **Armbian TPL + eMMC 引导 = 7 次零 panic**（含之前那次）。
+
+⚠️ **这个证据比串口日志弱。** 没有 TTL 适配器接 UART2，看不到 TPL 自己的输出，
+所以"6 次通过"的准确含义是"**内核每次都起来了**"，不是"TPL 每次都正确"。
+对本问题够用 —— 我们关心的失败形态是 panic，而那必然表现为内核起不来。
 
 ### 还没填的格子
 
 | | 从 U 盘引导 | 从 eMMC 引导 |
 |---|---|---|
-| Armbian U-Boot | ✅ 6 次，0 panic | ⚠️ 1 次，通 |
+| Armbian U-Boot | ✅ 6 次，0 panic | ✅ **7 次，0 panic**（10-08 补齐） |
 | 本移植 U-Boot | ❌ 从未测过 | ❌ 6 次，3 panic |
 
-左下角那一格要填上，得让本移植的引导程序去引导 U 盘 —— 而 boot ROM 不会跳过 SPI，
-所以只能改介质侧的引导顺序，不能靠换 boot target。
+**现在只剩左下角一格。** 但它比看上去难填：要让本移植的引导程序去引导 U 盘，
+而 boot ROM 不会跳过 SPI —— 板载 SD 卡槽 `mmc1` 是 boot ROM 的第三条链路，
+所以只能靠插 U 盘让 SPI 和 SD 都不含可引导镜像，那会破坏现有的恢复路径。
 
 ---
 
@@ -276,13 +287,55 @@ v2025.10 在 `sdram_init()` 里新增：
 | | v2022.07（Armbian） | v2025.10（本移植） |
 |---|---|---|
 | 1. rank 探测 + `data_training_first()` | @ dtsi 频率 | @ dtsi 频率（**相同**） |
-| 2. 切 ctl0 到 400MHz | — | ✅ **新增** |
+| 2. 切 ctl0 到 400MHz + **训练** | — | ✅ **新增** |
 | 3. 通道循环：`set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` / `set_cap_relate_config` | @ dtsi 频率 | **@ 400MHz** |
 | 4. `dram_all_config()` | @ dtsi 频率 | **@ 400MHz** |
-| 5. 切 ctl1 到 800MHz | ✅（ctl0 和 ctl1 一起） | ✅（只有 ctl1） |
+| 5. 切 ctl1 到 800MHz + 训练 | ✅（ctl0 和 ctl1 一起） | ✅（只有 ctl1） |
 
-**实质区别：3、4 两步的配置写入，从 dtsi 频率下改成了 400MHz 下进行。**
-训练本身（`data_training_first`）两边都在同一步、同一个频率。
+**实质区别：第 2 步新增了一次完整的 PHY 配置 + 频率切换 + 训练，而且它跑在第 3、4 步
+之前。** 第 3、4 步写的配置因此落在 400MHz 之后，而不是 dtsi 频率。
+
+### 训练在哪里发生 —— ⚠️ 我又修正了一次理解
+
+`data_training()` 在 LPDDR4 路径上**不是** `data_training_first`，后者是
+`lpddr4_mr_detect()`（只读 MR5/MR12/MR14，不做 PHY 训练）。
+
+真正的 `data_training()` 由 `lpddr4_set_ctl()` 在**每次升频之后**调用：
+
+```c
+/* lpddr4_set_ctl()，v2022.07 和 v2025.10 都有 */
+clk_set_rate(&dram->ddr_clk, hz);
+...
+for (channel = 0; channel < 2; channel++)
+        data_training(dram, channel, params, PI_FULL_TRAINING);
+```
+
+所以两边的**训练次数相同**（ctl0 一次 + ctl1 一次，各覆盖两个通道），
+**差别是训练发生在配置写入之前还是之后**：
+
+- v2022.07：配置写入 → 训练（升频）
+- v2025.10：训练（升频）→ 配置写入
+
+⚠️ **`data_training()` 不读 `base.ddr_freq`**（只读 `base.dramtype`），
+所以新增的 `base.ddr_freq = 400` 那个赋值**在功能上是空操作**，它只影响
+`sdram_print_ddr_info()` 打印出什么数字。这也是为什么串口上"训练频率不同"是错觉。
+
+### 配置写入会不会覆盖训练结果
+
+`lpddr4_set_phy()` → `lpddr4_copy_phy()` 写的是 `denali_phy[]`；
+而第 3 步那几个函数写的是 `denali_ctl[]` / `denali_pi[]`：
+
+| 函数 | 写的寄存器 |
+|---|---|
+| `set_memory_map()` | `denali_ctl[190/191/196]`、`denali_pi[155/199/41/34]` |
+| `set_ddrconfig()` | 不直接写 PHY |
+| `set_cap_relate_config()` | `denali_ctl[197/198]` |
+
+**没有重叠** —— 所以"配置覆盖训练结果"这条机制也不成立。
+
+⚠️ 于是这个差异剩下的唯一实际后果是：`data_training()` 训练出来的时序，
+在 `set_memory_map()` 设定行列/位宽之后是否仍然有效。两者本来互相独立，
+但顺序反过来了。**这是否在 RK3399 + LPDDR4 上有影响，未验证。**
 
 ⚠️ **这是上游 mainline 的代码，不是有意为之的缺陷。** 注释写的是
 "LPDDR4 needs to be trained at 400MHz"，看起来是某块板的修复。所以**直接回退它
@@ -300,11 +353,16 @@ v2025.10 在 `sdram_init()` 里新增：
 ⚠️ **优先补对照，而不是先改代码。** 上一次就是因为急着归因，把两个共变的变量
 当成了一个。
 
-1. **把 Armbian TPL + eMMC 这一格跑到 6 次**（现在只有 1 次）。这是最便宜的一步 ——
-   就是重启。**需要先征得同意**，因为它是目前唯一的可用对照组。
-2. **拿本移植的 U-Boot 去引导 U 盘**，填上左下角那一格。同样只能靠改介质侧。
-3. **做上面那个"升频时机"实验**：把第 2 步挪回配置之后，重建，跑 6 次。
-   ⚠️ 这是改动上游代码，必须做成可回退的补丁，并且
+1. ~~**把 Armbian TPL + eMMC 这一格跑到 6 次**~~ ✅ **已完成**（10-08，6/6 通过，
+   连之前那次共 7 次零 panic）。
+2. ~~**拿本移植的 U-Boot 去引导 U 盘**~~ ⚠️ **实测这条路走不通** ——
+   boot ROM 不跳过 SPI，板载 SD 卡槽排第三，要让 U 盘赢就得破坏现有恢复路径。
+   **改为反向做**：把本移植的引导程序写进 eMMC（Maskrom），拔掉 SD，让它引导 eMMC ——
+   这本来就是已发生的场景（tty8/tty10/tty12 都是），所以这格不需要新实验，
+   只是**本移植 U-Boot 那一列的 6 次里介质始终是 eMMC，Armbian 那一列现在也是 eMMC，
+   变量终于只剩引导程序了**。
+3. **做"升频时机"实验**：把 `lpddr4_set_rate(dram, params, 0)` 挪回配置写入之后，
+   重建，跑 6 次以上。⚠️ 这是改动上游代码，必须做成可回退的补丁，且
    `check-patch-sources.sh` 要跟着更新。
 4. **拿到 Armbian 真正的 `u-boot.itb` / `idbloader.img`**。想做的语义级设备树比对
    （而不是比参数）需要它们，而 `recovery/spi-working-armbian.bin` **不能用** ——

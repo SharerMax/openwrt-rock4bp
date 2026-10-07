@@ -94,9 +94,16 @@ function pointer pointing at non-code. See
   frequency only at the end. That is upstream mainline code, so reverting it may break
   other boards.
 - **Count your variables before claiming a cause.** The tty11-vs-tty12 comparison changed
-  the bootloader *and* the boot medium at the same time; they are perfectly collinear. It
-  does not support "the TPL is at fault". The empty cells are our TPL booting from USB,
-  and Armbian's TPL booting from eMMC (one data point).
+  the bootloader *and* the boot medium at the same time; they were perfectly collinear, so
+  it did not support "the TPL is at fault". As of 2026-10-08 both columns have been run
+  from eMMC — Armbian 7 boots with zero panics, ours 6 with 3 — so the bootloader is
+  now the only variable. That cell was closed by rebooting the box six times.
+- **`ConnectTimeout` does not bound an ssh call.** It only covers the TCP connect; the
+  askpass/password exchange can block indefinitely. A reboot loop sat on one call for four
+  minutes while the board had already rebooted and was answering normally. Wrap every ssh
+  in `timeout` and judge reachability by the wrapper's exit status.
+- **The board answers at `192.168.3.184`** as `root` / `armbian`. Read-only inspection is
+  fine and has been useful — the SPI retest and the eMMC matrix both came from it.
 - **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`), which leaves the working SPI
   bootloader alone. Prefer it over writing SPI.
 - **Do not propose an upstream PR** until this is fixed.
