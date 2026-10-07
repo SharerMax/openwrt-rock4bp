@@ -54,6 +54,21 @@
 # would be meaningless. regen-dts-patch.sh performs the first of those; the two
 # U-Boot ones are turned into patches by hand.
 #
+# THIRD KIND, ADDED 2026-10-08: a patch with no overlay source at all --
+#
+#   0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch
+#       Modifies an existing upstream file (drivers/ram/rockchip/sdram_rk3399.c)
+#       instead of adding one, so there is no whole-file payload to compare
+#       against and check-patch-sources.sh cannot check it. Its rationale lives
+#       in the patch header, which is the only place it exists.
+#
+#       What guards it instead is three assertions in build.sh on the source that
+#       was actually compiled, because the change is invisible in the artefacts:
+#       idbloader.img is 192512 bytes whether or not it is applied. Those
+#       assertions were verified against negative controls -- reinserting the
+#       removed block, collapsing the two calls to one, and deleting the file all
+#       make them fail.
+#
 # Not syncing a patch source is exactly where drift hides, and on 2026-10-06 it
 # hid for real: the defconfig source was corrected to record that this board does
 # have SPI flash, and the correction was never turned into the patch, so the tree

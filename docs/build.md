@@ -1,6 +1,6 @@
 # 构建
 
-构建环境、目录结构、构建流程、包集合、17 项校验、产物与可复现性。
+构建环境、目录结构、构建流程、包集合、22 项校验、产物与可复现性。
 
 ---
 
@@ -64,7 +64,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         manifest + 构建后 17 项校验
+  build.sh                                         manifest + 构建后 22 项校验
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
   check-patch-sources.sh                           三个补丁源与生成的补丁逐一比对
@@ -112,7 +112,7 @@ spi-working-armbian.bin                            从板上读到的 SPI dump
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 17 项校验     ← 不是装饰
+4. 构建后 22 项校验     ← 不是装饰
 ```
 
 日志写到 `/tmp/build-full.log`，结尾打印校验块、`REAL_EXIT_CODE` 和日志年龄。
@@ -138,7 +138,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 
 ---
 
-## 17 项构建后校验
+## 22 项构建后校验
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -161,13 +161,35 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  u-boot dtb carries the RK3399 DRAM parameters (rockchip,sdram-params)
   OK/FAILED  u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)
   OK/FAILED  both idbloader variants built
+  OK/FAILED  0103 applied: no early LPDDR4 rate switch ahead of the channel loop
+  OK/FAILED  0103 applied: both controllers switched after the configuration
+  OK/FAILED  0103 applied without rejects
   OK/FAILED  image is newer than the staged bootloader it embeds
   OK/FAILED  staged bootloader contains the RK3399 DRAM parameters
   OK/FAILED  the image embeds that bootloader at LBA 0x40
 ```
 
-（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印 20 行 ——
+（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印 25 行 ——
 `grep -c 'check "' scripts/build.sh` 数的是语句位置，不是执行次数。）
+
+### ⚠️ 有三类补丁，护法不一样
+
+| 补丁类型 | 例子 | 谁盯它 |
+|---|---|---|
+| 新增文件 | `0001`（内核 DTS）、`0101`（defconfig）、`0102`（板级 dtsi） | `check-patch-sources.sh` 比对 payload |
+| **修改已有上游文件** | **`0103`（`sdram_rk3399.c`）** | **`build.sh` 的三条断言，直接盯编译用的源码** |
+| 新增文件且跨多文件 | `0001` 还改了 kernel Makefile | 同第一类，但必须按文件拆 payload 才有意义 |
+
+⚠️ **第二类没有 payload 可比对**（它改的是一个已存在的文件，补丁里只有片段），
+所以 `check-patch-sources.sh` 结构上就检查不了它。
+
+⚠️ **而这个改动在产物里完全看不见**：打或不打，`idbloader.img` 都是 192512 字节，
+上面所有内容断言的结论**完全一样**。所以断言只能打在**实际参与编译的那份源码**上。
+
+⚠️ **这三条断言本身经过负控制验证** —— 不然它们可能是一组永远通过的摆设：
+把删掉的块塞回去、两次调用合并成一次、以及文件本身不存在，三种情况都会让它们失败。
+（这一步不能省：仓库里已经有过一个对所有文件都报"没找到"的检查器，
+和坏掉的检查器在输出上长得一模一样。）
 
 ### 分三批加的，因为犯的错不同
 

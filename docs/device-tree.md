@@ -218,6 +218,6 @@ spec），而 mainline U-Boot 给每一块同规格 RK3399 用的都是这个文
 ## 相关文档
 
 - [hardware.md](hardware.md) — 硬件事实与继承到的值
-- [build.md](build.md) — 构建流程、manifest、17 项校验
+- [build.md](build.md) — 构建流程、manifest、22 项校验
 - [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) — 缺 sdram-params 导致的变砖
 - [wifi.md](wifi.md) — WiFi 的完整排查记录

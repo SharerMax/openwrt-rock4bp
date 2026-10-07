@@ -66,6 +66,28 @@
 > **内存被写坏或读坏 → 指针被污染 → 取指失败。** 故障点每次都在不同位置
 > （`mmc_rescan` 工作线程 / idle 路径 / I2C 中断），这种随机性是硬件类故障的特征。
 >
+> ### 补丁已写好并构建完成 —— **只差上机**
+>
+> `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`：
+> 删掉通道循环前那次 `lpddr4_set_rate(dram, params, 0)`，并把尾部那一次
+> `set_rate_index` 变成 ctl0、ctl1 各一次 —— 恢复 v2022.07 的顺序。
+>
+> | | 值 |
+> |---|---|
+> | `idbloader.img` | `7c65ea03783a614c…` |
+> | ext4 镜像 gz | `d15f566f56491301…`，12811095 字节 |
+> | 构建后校验 | **22 项全过**（新增 3 条盯这个补丁） |
+>
+> ⚠️ **这个改动在产物里完全看不见**（打或不打都是 192512 字节），所以断言直接打在
+> 实际编译的源码上，并且做过负控制验证。
+>
+> ⚠️ **还没验证。** 需要 Maskrom 刷进 eMMC（构建机做不了），然后**跑 6 次**。
+> **一次成功不能证明修好了** —— 当初 6 次里也成功过 1 次。
+>
+> ⚠️ **只能恢复到 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
+> 它的 banner 是 `2022.07_armbian-…`，自带补丁，参数与我们不同
+> （它打 50MHz，而我们参数数组里根本没有 50）。
+>
 > ### DRAM 三个假设全部排除，剩一个差异
 >
 > 拿到 U-Boot **v2022.07** 源码（Armbian 那版）逐层比对：
@@ -76,7 +98,17 @@
 > | DRAM 相关 CONFIG 不同 | ❌ 相同（`CONFIG_RAM_ROCKCHIP_LPDDR4` 只是改过名） |
 > | 板级 U-Boot dtsi 不同 | ❌ Armbian 的 `rk3399-rock-pi-4-u-boot.dtsi` include 的是同样两个文件 |
 > | 驱动代码大改 | ❌ 93 KB 的文件只差 +64/−48 行（3%） |
-> | 训练频率不同（串口里 `50MHz` vs `400MHz`） | ❌ **是打印顺序的假象**，两边训练频率相同 |
+> | `cs0_high16bit_row` 被新调用同步（`Row=16/15` vs `Row=16`） | ❌ 该字段在 RK3399 路径里**只用于打印** |
+>
+> ⚠️ **"配置写入时的实际频率不同"是真的** —— 我中途撤回过一次，那是错的，已撤回那个撤回。
+> 串口上 `50MHz` 在前、`400MHz` 在前，**如实反映了当时的状态**：Armbian 还在低频时
+> 打印并配置，我们已经切到 400MHz 才打印并配置。
+> 我们的 dtsi 里 `base.ddr_freq = 80`（扁平数组下标 34，由结构体总长 1530 与 dtsi
+> 的 u32 总数吻合、`num_channels`/`odt` 两个锚点确认）。
+>
+> ⚠️ **而 80 推翻了更早的一个说法**：整个参数数组里**没有 50**，两版
+> `sdram_print_ddr_info()` 实现完全相同，2022.07 也从不对该字段赋值 ——
+> **Armbian 的参数与我们不同**，它的 banner 带 `armbian` 补丁后缀。那些补丁不在手上。
 >
 > **唯一找到的实质差异**：v2025.10 把 LPDDR4 切到 400MHz 的时机**提前到了配置写入之前**
 > （`set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` / `dram_all_config`）。
@@ -99,7 +131,7 @@
 |---|---|
 | [docs/hardware.md](docs/hardware.md) | 硬件事实、板型辨识、40-pin、版本差异、按键、介质 |
 | [docs/device-tree.md](docs/device-tree.md) | 设备树策略、继承 dtsi ≠ 继承 board、U-Boot 板级 dtsi、dtc 坑 |
-| [docs/build.md](docs/build.md) | 构建环境、目录结构、17 项校验、包集合、产物、可复现性 |
+| [docs/build.md](docs/build.md) | 构建环境、目录结构、22 项校验、包集合、产物、可复现性 |
 | [docs/flashing.md](docs/flashing.md) | 烧卡、首次启动该看什么、eMMC 安装、Maskrom |
 | [docs/boot-order.md](docs/boot-order.md) | SPI → eMMC → SD、镜像自带引导程序、SPI 读不对 |
 | **故障记录** | |
@@ -251,8 +283,10 @@
 - [x] Phase 5n：补齐对照组 —— Armbian TPL + eMMC 连测 6 次（连之前共 7 次零 panic），
       **变量收敛到只剩引导程序**
 - [ ] **Phase 5m（最高优先级）：修 DRAM 初始化** —— 6 次启动 3 次 panic，镜像因此
-      不能算可交付。已定位到唯一差异（LPDDR4 升频+训练的时机），下一步是可回退地
-      把它挪回配置写入之后，重建并跑 6 次
+      不能算可交付。补丁 `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
+      **已写好并构建完成（`idbloader.img` `7c65ea03…`），22 项校验全过，
+      3 条新断言经过负控制验证** —— 只差上机。需 Maskrom 刷入 eMMC 后跑 6 次，
+      **一次成功不算数**
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）

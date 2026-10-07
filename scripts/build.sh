@@ -175,6 +175,27 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
 
+  # The LPDDR4 ordering experiment (0103) removes the early rate switch from
+  # sdram_rk3399.c. Nothing in the artefacts reveals that: the property it
+  # changes is a source statement, idbloader.img keeps the same 192512 bytes
+  # either way, and every check above passes identically with the patch applied
+  # or silently dropped. So assert on the source that was actually compiled.
+  #
+  # Negated grep and an -f guard, so a missing file fails rather than passes --
+  # the same mistake the negative control in check-patch-sources.sh was written to
+  # catch. -eq on a count is arithmetic, so an absent file there would abort
+  # under set -e rather than quietly pass.
+  DRAMDRV=$UB/drivers/ram/rockchip/sdram_rk3399.c
+
+  check "0103 applied: no early LPDDR4 rate switch ahead of the channel loop" \
+    "[ -f '$DRAMDRV' ] && ! grep -q 'LPDDR4 needs to be trained at 400MHz' '$DRAMDRV'"
+
+  check "0103 applied: both controllers switched after the configuration" \
+    "[ -f '$DRAMDRV' ] && [ \$(grep -c 'dram->ops->set_rate_index' '$DRAMDRV') -eq 2 ]"
+
+  check "0103 applied without rejects" \
+    "! find '$UB' -name '*.rej' | grep -q ."
+
   # The image carries its own bootloader, and it must be the fixed one.
   #
   # OpenWrt's rockchip image recipe already embeds it:

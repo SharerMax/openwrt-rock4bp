@@ -90,9 +90,17 @@ function pointer pointing at non-code. See
   is assigned relative to the printf, not a difference in training frequency.
 - **The one real difference found**: v2025.10 moves the LPDDR4 switch to 400MHz to
   *before* `set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` /
-  `dram_all_config`. v2022.07 configured all of that at the dtsi rate and bumped the
-  frequency only at the end. That is upstream mainline code, so reverting it may break
-  other boards.
+  `dram_all_config`. v2022.07 configured all of that at the rate the board parameters
+  ask for (80MHz) and bumped the frequency only at the end. That is upstream mainline
+  code, so reverting it may break other boards.
+  **A patch doing exactly that exists and is built, unverified on hardware:**
+  `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`, guarded by three
+  assertions in `build.sh` because the change is invisible in the artefacts.
+- **Do not assume mainline v2022.07 is what Armbian runs.** Its banner is
+  `2022.07_armbian-…`, it patches its own U-Boot, and its DRAM parameters differ from
+  ours — it prints a 50MHz init rate and no 50 exists anywhere in our parameter array.
+  Those patches are not available, so mainline v2022.07 ordering is the closest we can
+  get, not the same thing.
 - **Count your variables before claiming a cause.** The tty11-vs-tty12 comparison changed
   the bootloader *and* the boot medium at the same time; they were perfectly collinear, so
   it did not support "the TPL is at fault". As of 2026-10-08 both columns have been run

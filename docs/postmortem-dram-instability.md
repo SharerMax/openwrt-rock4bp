@@ -241,22 +241,45 @@ Armbian 用 `BOOTCONFIG="rock-pi-4-rk3399_defconfig"`，它的板级 dtsi 是
 和我们的 `rk3399-rock-4b-plus-u-boot.dtsi` **完全一致**。我们没 include 的
 `&sdhci` 时序覆盖和 `leds` 节点不影响 DRAM。
 
-### ⚠️ 顺带撤回："50MHz vs 400MHz 是训练频率不同" —— ❌ 是打印顺序的假象
+### ⚠️⚠️ 我撤回了一次撤回 —— 频率差异是真的，不是打印假象
 
-本文早期版本把串口输出里的这个差异当成关键线索：
+**本文的第二个版本说过"50MHz vs 400MHz 只是打印顺序的假象，两边训练频率相同"。
+那句话是错的，已撤回。**
 
-| | Armbian | 本移植 |
-|---|---|---|
-| 打印顺序 | `Channel 0: LPDDR4, 50MHz` **在前** | `lpddr4_set_rate: ... 400MHz` **在前** |
-| Row 位数 | `Row=16/15` | `Row=16` |
+当时的推理是：`sdram_print_ddr_info()` 打印 `params->base.ddr_freq`，而 v2025.10 把
+它改成 400 的赋值在打印之前，v2022.07 压根不改 —— 所以同一个状态打印出不同数字。
 
-**两边的训练频率是同一个值。** `sdram_print_ddr_info()` 打印的是
-`params->base.ddr_freq`，而 v2025.10 新增的那行把 `base.ddr_freq` 改成 400 的位置
-**在打印之前**、v2022.07 里它压根不改这个字段 —— 所以同一个运行时状态，
-两边打印出不同的数字。**这是赋值相对于 `printf` 的位置差异，不是频率差异。**
+**这个推理漏了一步：`sdram_print_ddr_info()` 在通道循环里，而循环之前那次
+`lpddr4_set_rate(dram, params, 0)` 已经把控制器真的切到 400MHz 了。**
 
-（`Row=16/15` vs `Row=16` 那一行倒是真的，但它属于容量探测结果，且 dtsi 相同，
-所以也解释不了差异。）
+```
+v2022.07:  训练 → [打印 "50MHz"，此时 DRAM 确实在低频] → 配置写入 → 升频
+v2025.10:  训练 → 升频到 400MHz → [打印 "400MHz"，此时 DRAM 确实在 400MHz] → 配置写入
+```
+
+**打印值如实反映了当时的状态** —— 配置写入时的实际频率，两边确实不同。
+原来的观察是对的，那次撤回是错的。
+
+⚠️ **这个更正花了两轮，而它的起因是我没去核实一个数。** 现在核实了：
+
+dtsi 里 `base.ddr_freq` 位于扁平 u32 数组的**下标 34**（`sdram_cap_info` 11 个 +
+`sdram_msch_timings` 6 个，每通道 17 个，两通道 34）。三个独立锚点确认：
+
+| 校验 | 值 |
+|---|---|
+| 结构体推算总长 `34 + 5 + 332 + 200 + 959` | **1530**，与 dtsi 的 u32 总数**完全吻合** |
+| 下标 36 `num_channels` | 2，与 `.inc` 一致 |
+| 下标 38 `odt` | 1，与 `.inc` 一致 |
+| **下标 34 `ddr_freq`** | **80** |
+
+⚠️ **而 80 这个值推翻了我更早的一个说法。** 我曾说"Armbian 的 50MHz 就是 dtsi 的值"，
+但**整个 dtsi 数组里根本没有 50 这个数**，而 `sdram_print_ddr_info()` 两版实现完全相同
+（都只 `printdec(base->ddr_freq)`），2022.07 也从不对该字段赋值。
+
+**所以 Armbian 的参数与我们不同**，尽管 `rk3399-sdram-lpddr4-100.dtsi` 逐字节相同
+—— 它的 banner 是 `2022.07_armbian-2022.07-Se092-…`，**Armbian 打过补丁**，
+那些补丁不在我们手上。⚠️ 这条线到此为止：我们只能把顺序改回 mainline v2022.07 的样子，
+**改不成 Armbian 的确切行为**。
 
 ### 排除四、五、六：另外三条我怀疑过、然后自己查掉的机制
 
@@ -267,6 +290,7 @@ Armbian 用 `BOOTCONFIG="rock-pi-4-rk3399_defconfig"`，它的板级 dtsi 是
 | IO 参数按错误的频率挑选（`lpddr4_get_io_settings()` 用 `base.ddr_freq` 选驱动强度，若在赋值之后调用就会按 400 选） | 全部 7 个调用点在第 361～2101 行，**都在第 2969 行赋值之前** |
 | 运行期 DDR 时钟不同（`clk_set_rate(&priv->ddr_clk, params->base.ddr_freq * MHz)`） | 该行在 `rk3399_dmc_init()` 里，2025.10 用 `phase_sdram_init()` 门控，**U-Boot proper 根本不调用它**；`clk_set_rate` 也在 `sdram_init()` 之前执行，用的是 dtsi 值 |
 | DRAM 驱动代码在 2022.07→2025.10 之间被大改 | 93 KB 的文件里只差 **+64/−48 行**（3%） |
+| `cs0_high16bit_row` 被 v2025.10 新增的 `sdram_detect_high_row()` 同步，改变了内存映射（这就是 `Row=16/15` vs `Row=16`） | 该字段在 RK3399 路径里**只用于 `sdram_print_ddr_info()` 打印**，别处不读；`set_memory_map()` 用的是 `cap_info.ddrconfig` 推 row，不看它 |
 
 ---
 
@@ -317,8 +341,12 @@ for (channel = 0; channel < 2; channel++)
 - v2025.10：训练（升频）→ 配置写入
 
 ⚠️ **`data_training()` 不读 `base.ddr_freq`**（只读 `base.dramtype`），
-所以新增的 `base.ddr_freq = 400` 那个赋值**在功能上是空操作**，它只影响
-`sdram_print_ddr_info()` 打印出什么数字。这也是为什么串口上"训练频率不同"是错觉。
+所以新增的 `base.ddr_freq = 400` 那个赋值**在功能上是空操作**，
+它只影响 `sdram_print_ddr_info()` 打印出什么数字。
+
+⚠️ **但"空操作"不等于"这一行没用"。** 那次赋值和它上面的 `lpddr4_set_rate(dram,
+params, 0)` 是一起的，**真正起作用的是后者**：它真的把控制器切到了 400MHz，
+所以配置写入时的实际频率确实变了。空操作的只是那行赋值。
 
 ### 配置写入会不会覆盖训练结果
 
@@ -361,13 +389,35 @@ for (channel = 0; channel < 2; channel++)
    这本来就是已发生的场景（tty8/tty10/tty12 都是），所以这格不需要新实验，
    只是**本移植 U-Boot 那一列的 6 次里介质始终是 eMMC，Armbian 那一列现在也是 eMMC，
    变量终于只剩引导程序了**。
-3. **做"升频时机"实验**：把 `lpddr4_set_rate(dram, params, 0)` 挪回配置写入之后，
-   重建，跑 6 次以上。⚠️ 这是改动上游代码，必须做成可回退的补丁，且
-   `check-patch-sources.sh` 要跟着更新。
+3. **做"升频时机"实验** —— **补丁已写好并已构建，等上机**。
+
+   补丁：`package/boot/uboot-rockchip/patches/0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
+
+   做法两处：删掉通道循环前那次 `lpddr4_set_rate(dram, params, 0)`；把尾部那一次
+   `set_rate_index` 变成 ctl0、ctl1 各一次 —— 等价于 v2022.07 的顺序。
+   ⚠️ 改动上游代码，所以做成独立补丁，整份删掉即可回退。
+
+   | | 值 |
+   |---|---|
+   | `idbloader.img` | `7c65ea03783a614c…` |
+   | `idbloader-spi.img` | `d3244a0239605 348…` |
+   | `u-boot.itb` | `37f1c6045f2572e4…` |
+   | ext4 镜像 gz | `d15f566f56491301…`，12811095 字节 |
+
+   ⚠️ **这个改动在产物里看不见** —— 打或不打 `idbloader.img` 都是 192512 字节，
+   所以加了三条断言直接盯编译用的源码（见 [build.md](build.md)），
+   并且它们经过负控制验证。
+
+   ⚠️ **上机需要 Maskrom**（`rkdeveloptool wl 0 <镜像>`），构建机做不了，
+   得有人在板子旁边操作。**判据是 6 次连续启动零 panic**，一次不算。
 4. **拿到 Armbian 真正的 `u-boot.itb` / `idbloader.img`**。想做的语义级设备树比对
    （而不是比参数）需要它们，而 `recovery/spi-working-armbian.bin` **不能用** ——
    那份 dump 里 FDT magic 出现 **0 次**，根本不是真实的 U-Boot 数据（见
    [boot-order.md](boot-order.md)）。
+5. **⚠️ 已知做不到的一件事**：把行为改成和 Armbian 完全一致。
+   它的参数里 `ddr_freq` 是 50，而我们的 dtsi 里是 80 且全数组无 50，
+   加上 banner 里的 `armbian` 补丁标记 —— 那些补丁不在我们手上。
+   **第 3 步能恢复的是 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
 
 ⚠️ **不要因为 tty8 成功过一次就认为改好了。** 6 次里成功 1 次和成功 6 次是完全不同的
 两件事。这正是本文开头那个教训的延续：一次成功的启动证明"能工作"，不证明"稳定"。
