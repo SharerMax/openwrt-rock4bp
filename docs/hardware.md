@@ -141,39 +141,49 @@ Radxa 写它的用途。
 
 ---
 
-## eMMC 当前状态（实测）
+## eMMC 状态的变迁（实测）
 
-⚠️ 早期文档写过"`dd` 已完成并校验、整盘 sha256 一致（`5847c611…`）"。**现在 eMMC 上不是
-那个布局** —— 后来 eMMC 被重装了。板上实测：
+⚠️ **这一节改过两次，都记下来** —— "记录当时为真的结论、之后不复查"是本仓库反复
+吃亏的地方，而 eMMC 布局恰好是变化最频繁的一项。
+
+### 一度被描述成"裸分区，内容未知"——**那是错的**
+
+当时的结论来自启动日志里没有分区名，**而没有实际去读**。只读挂载一看，其实是完整的
+Armbian 26.11.0-trunk.62（内核 6.18.54、hostname `rockpi-4b`、1.5 GB、含用户 `rock`
+家目录）。
+
+### 被 `dd` 覆盖过一次，没有备份
+
+那次写 OpenWrt 镜像时是在明确告知后选择直接覆盖的，**代价是那套 Armbian 和
+`/home/rock` 永久消失**。后来重装过一次，实测布局是单个 29280 MiB 的 ext4：
 
 ```
-/proc/partitions
-  179 0   30310400  mmcblk0        ← 28.9 GiB
-  179 1   29982720  mmcblk0p1      ← 单个 29280 MiB 分区
-
-mmcblk0  MBR 签名 55 aa 有效
-mmcblk0p1 offset 1080 处: 53 ef    ← ext4 superblock magic
+179 1  29982720  mmcblk0p1
+mmcblk0p1 offset 1080 处: 53 ef          ← ext4 superblock magic
 mmcblk0p1 前 4 MiB 里的字符串:
   /lib/firmware/regulatory.db-debian
   /usr/bin/which.debianutils
 ```
 
-单个 28.6 GB ext4 + Debian 文件名 = **Armbian**，不是 OpenWrt 镜像的
-`p1 16 MiB + p2 512 MiB`。当前运行系统是 OpenWrt 25.12.5，root 在 `/dev/root` 上
-`type ext4` —— 跑的是 **SD 卡**，不是 eMMC。
+### 现在：OpenWrt 镜像
 
-> 那个 `5847c611…` 的 `dd` 校验结论本身没错，它说的是**当时**写对了字节。
+2026-10-06 用 Maskrom 写入整包（`rkdeveloptool wl 0 <镜像>`）：
 
-**⚠️ 一条代价记录。** 原始那块 eMMC 上装着完整的 Armbian 26.11.0-trunk.62（内核 6.18.54、
-hostname `rockpi-4b`、1.5 GB、含用户 `rock` 家目录），**被那次 `dd` 覆盖掉了且没有备份**。
-现在这套是后来重装的，不是原来那套。
+```
+179 1   32768   mmcblk0p1      ← 16 MiB
+179 2  1048576  mmcblk0p2      ← 512 MiB
+磁盘标识 0x5452574f，root=PARTUUID=5452574f-02
+```
 
-> 早期文档在这里也记错过：只看启动日志里没有分区名就下结论说"裸分区、内容未知"，
-> 没真去读 —— 结果明明是完整可用的系统。
+**eMMC 引导已验证**（tty8）：`mmc@fe330000.bootdev.part /boot.scr` →
+`VFS: Mounted root (ext4 filesystem) on device 179:2`。
 
-**eMMC 引导至今没有任何真机证据**，只验证到"字节写对了"为止。现在 SPI 上是 Armbian 的
-U-Boot，它的 `BOOT_TARGETS` 里 `mmc0` 排在 USB 之前，所以原理上这条路是通的，只是
-还没试。详见 [flashing.md](flashing.md)。
+⚠️ 那次跑的是**本移植的引导程序**，之后同一份镜像又出现了随机 panic（6 次 3 次崩）——
+引导路径可用，但稳定性有问题。见
+[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+
+⚠️ **p2 之后约 28 GB 是空的** —— 镜像只占 576 MiB。要保留任何东西得先备份。
+写入方式见 [flashing.md](flashing.md)。
 
 ---
 

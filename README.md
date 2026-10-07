@@ -7,55 +7,86 @@
 
 ---
 
-## 状态：板子可用；本移植的引导程序在真机上**未验证**，且这是有意保留的状态
+## 状态：本移植的引导程序**能启动但不稳定**，根因已缩小到 DRAM 参数
 
-> ### ⚠️ 本移植的引导程序从未在真机上运行过
+> ### ⚠️ 本移植的 U-Boot 在真机上跑起来了，但会随机 panic
 >
-> 这不是"还没来得及试"，而是**试过、确认只有一条路、而这条路被有意不走**。
+> 2026-10-06 用 Maskrom 把整包镜像刷进 eMMC 后，**本移植的引导程序第一次在真机上执行**。
 >
-> **背景。** 2026-10-06 板子变砖：SPI 上的 U-Boot 在 TPL 阶段退出，因为它的板级设备树
-> 缺 `rockchip,sdram-params`，无法初始化 DRAM。
+> **`rockchip,sdram-params` 修复确认生效** —— TPL 打出了完整的 LPDDR4 训练过程：
 >
 > ```
-> rk3399_dmc_of_to_plat: Cannot read rockchip,sdram-params -1
-> DRAM init failed: -1
+> U-Boot TPL 2025.10-OpenWrt-r33051-f5dae5ece4 (Jun 29 2026 - 12:59:20)
+> lpddr4_set_rate: change freq to 400MHz 0, 1
+> Channel 0: LPDDR4, 400MHz  BW=32 Col=10 Bk=8 CS0 Row=16 CS=1 Die BW=16 Size=2048MB
+> Channel 1: LPDDR4, 400MHz  BW=32 Col=10 Bk=8 CS0 Row=16 CS=1 Die BW=16 Size=2048MB
 > ```
 >
-> **构建过程完全静默** —— `idbloader.img` 正常产出、大小也正常。缺陷只能靠"把这份引导
-> 程序刷进 SPI"才暴露，而那时已经无法写入替换。
+> 两通道各 2048MB = 4GB，与实物一致。对比当年变砖时的
+> `Cannot read rockchip,sdram-params -1 / DRAM init failed: -1` —— **这一项修好了。**
 >
-> **已修并在构建层面验证**：补上 `arch/arm/dts/rk3399-rock-4b-plus-u-boot.dtsi`，
-> `rockchip,sdram-params`（1530 个 u32）与 `binman` 节点都在编译出的 `u-boot.dtb` 里，
-> 镜像 LBA 0x40 处也确实带着这份修好的引导程序；`build.sh` 有 17 条断言盯住，其中 3 条
-> 直接打在镜像上。
+> **但 12 次启动里，本移植的引导程序 6 次只有 1 次挂上 root，3 次内核 panic。**
 >
-> **为什么没在真机上跑。** 要让本移植的 TPL 执行，只能改 SPI 里的引导程序，而这三条路
-> 都已排除：
+> | | 本移植 U-Boot | Armbian U-Boot |
+> |---|---|---|
+> | 启动次数 | 6 | 6 |
+> | **挂上 root** | **1** | 2 |
+> | 到达 shell | 0 | 2 |
+> | **内核 panic** | **3** | **0** |
+> | 日志早断（无法判定死活） | 2 | 2 |
 >
-> | 路线 | 结果 |
-> |---|---|
-> | 从运行中的系统写 SPI | ❌ Linux 读不到芯片内容，**写入无法验证** |
-> | 短接 SPI 引脚让 boot ROM 跳过 SPI | ❌ 实测无效：短接后 `mtd0` 消失，但串口第一行仍是 SPI 里的 TPL |
-> | 借道镜像自带的那份 | ❌ SPI 排第一、读到就赢，卡上 LBA 0x40 那份从未被执行 |
+> ### 决定性对照：唯一变量是 TPL
 >
-> 只剩 Maskrom 一条，**已验证可用**（官方 `rk3399_loader` + Armbian 引导程序成功救回），
-> 但会覆盖掉 SPI 上那份可用的引导程序 —— 决定**不写**。
+> ```
+> tty11  Armbian TPL → 引导 U 盘 → VFS: Mounted root (ext4) on device 8:2 → 进 shell
+> tty12  本移植 TPL → 引导 eMMC → 0.54 秒 panic
+> ```
 >
-> ### 这个未验证项的实际风险落在哪
+> **同一份内核、同一份 dtb（63877 字节，两边 crc32+sha1 哈希完全相同）、同一个 rootfs。**
+> 唯一差别是 TPL/SPL。
 >
-> **这块板子不受影响** —— SPI 里是 Armbian 的 U-Boot，OpenWrt 已实测从 microSD 完整启动
-> （`/boot.scr` + `Linux-6.12.94` kernel FIT + `radxa_rock-4b-plus` dtb，crc32+sha1 通过）。
+> ### 症状：函数指针被指向垃圾地址
 >
-> **⚠️ 风险在不贴 SPI 的 V1.73 量产板上。** 那类板 boot ROM 没有 SPI 可读，**只能**用
-> 镜像自带的那份引导程序 —— 而那份恰好就是唯一没在真机上跑过的东西。换句话说：SPI 在
-> 这里既是麻烦（挡路），也是保护（提供一份能用的引导程序）。
+> 三次 panic 的形态一致 —— **PC 落到不是代码的地方**：
 >
-> **要关闭这一项**：用 Maskrom 把 `idbloader-spi.img` + `u-boot.itb` 写进 SPI，上电看
-> 串口第一行是否变成 `U-Boot TPL 2025.10-OpenWrt-…`。失败了按同一流程刷回 Armbian
-> （SPI 上只有引导程序，完全可从镜像文件复现）。
+> | 日志 | 异常 | PC |
+> |---|---|---|
+> | tty8 | `IABT (lower EL)` 取指失败 | `ffff8000819ebb40` |
+> | tty10 | `Undefined instruction: 0000000002000000` | `Code: ... cb150035 ...`，`cb` 在 ARM64 里不是合法指令 |
+> | tty12 | `IABT (current EL)` + level 0 fault | `0xdfff800080099ee4`，内核声称 *"address between user and kernel address ranges"* |
 >
-> 详见 [docs/postmortem-u-boot-ddr.md](docs/postmortem-u-boot-ddr.md) 与
-> [docs/boot-order.md](docs/boot-order.md)。
+> tty12 的调用链本身完全正常（`rk3x_i2c_irq` → `__wake_up` → `__wake_up_common`），
+> 是它调用的**函数指针**是坏的，而且 x4 寄存器里是同一个值。
+>
+> **内存被写坏或读坏 → 指针被污染 → 取指失败。** 故障点每次都在不同位置
+> （`mmc_rescan` 工作线程 / idle 路径 / I2C 中断），这种随机性是硬件类故障的特征。
+>
+> ### 定位到 DRAM 参数，但还没修
+>
+> Armbian 的 TPL 先跑 50MHz 再升频：
+>
+> ```
+> Channel 0: LPDDR4, 50MHz
+> lpddr4_set_rate: change freq to 400000000 mhz 0, 1
+> lpddr4_set_rate: change freq to 800000000 mhz 1, 0
+> ```
+>
+> 本移植直接从 400MHz 开始：
+>
+> ```
+> lpddr4_set_rate: change freq to 400MHz 0, 1
+> lpddr4_set_rate: change freq to 800MHz 1, 0
+> ```
+>
+> ⚠️ **这只是假设，未证实。** 低速起步可能是 DRAM 训练（write leveling / gate
+> training）需要的时间，但我们用的是 `rk3399-sdram-lpddr4-100.dtsi`，而上游
+> `rk3399-rock-4c-plus-u-boot.dtsi` **用的是同一个文件** —— 所以选型本身没有可疑之处。
+> 要定论得比对 Armbian 的 dtsi 源码，那棵树不在手上。
+>
+> **下一步**：拿到 Armbian 的 U-Boot 源码，比对它用的 `rk3399-sdram-*.dtsi`，看差异
+> 到底在哪。**在比对之前不要改参数** —— 现在改就是猜。
+>
+> 完整记录见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
 
 ---
 
@@ -70,8 +101,10 @@
 | [docs/build.md](docs/build.md) | 构建环境、目录结构、17 项校验、包集合、产物、可复现性 |
 | [docs/flashing.md](docs/flashing.md) | 烧卡、首次启动该看什么、eMMC 安装、Maskrom |
 | [docs/boot-order.md](docs/boot-order.md) | SPI → eMMC → SD、镜像自带引导程序、SPI 读不对 |
+| **故障记录** | |
+| [docs/postmortem-u-boot-ddr.md](docs/postmortem-u-boot-ddr.md) | U-Boot 变砖的根因（缺 DRAM 参数）与修复 |
+| [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md) | 修好之后发现的随机 panic，根因缩小到 DRAM 初始化 |
 | [docs/wifi.md](docs/wifi.md) | WiFi 排查完整记录（证据、测试矩阵、固件许可） |
-| [docs/postmortem-u-boot-ddr.md](docs/postmortem-u-boot-ddr.md) | U-Boot 变砖的排查记录、方法论陷阱 |
 | [AGENTS.md](AGENTS.md) | 给 AI agent 的工作指南 |
 
 要动手的话先读 [AGENTS.md](AGENTS.md)。
@@ -80,15 +113,20 @@
 
 ## 已验证可用
 
-以下每一行的证据都来自**板子实测**（OpenWrt 25.12.5 / Linux 6.12.94，2026-10-06 复核）。
+以下每一行的证据都来自**板子实测**（OpenWrt 25.12.5 / Linux 6.12.94，2026-10-06/08 复核）。
 凡是没有在真机上跑过的，都不在这个表里。
+
+⚠️ **本移植的引导程序有随机 panic 的问题**（6 次启动 3 次崩），所以下面"启动"和
+"eMMC 引导"两行的证据都注明了是由**哪一次**运行给出的。用 Armbian 的引导程序启动
+稳定，用本移植的那份不稳定 —— 详见顶部状态节。
 
 | 外设 | 状态 | 关键证据 |
 |---|---|---|
-| 启动 | ✅ | microSD（USB 读卡器）引导 → `/boot.scr` 找到 → `Linux-6.12.94` kernel FIT + `radxa_rock-4b-plus` dtb，crc32+sha1 通过 → `procd: - init -` |
+| 启动（Armbian 引导程序） | ✅ 稳定 | microSD（USB 读卡器）引导 → `/boot.scr` → `Linux-6.12.94` kernel FIT + `radxa_rock-4b-plus` dtb 63877 B，crc32+sha1 通过 → `procd: - init -`。**6 次启动零 panic**（tty6/tty11 挂上 root，tty4/tty5 到 shell） |
+| **启动（本移植引导程序）** | ⚠️ **不稳定** | 同一条链路跑通，但 6 次里 1 次挂上 root（tty8）、3 次 panic（tty8/tty10/tty12）、2 次日志早断。**根因在 DRAM 初始化**，见顶部状态节 |
 | 身份 | ✅ | `model: Radxa ROCK 4B+`、`board_name: radxa,rock-4b-plus` |
 | **以太网** | ✅ 1Gbps | `Link is Up - 1Gbps/Full - flow control rx/tx` → `br-lan: ... forwarding state` |
-| **eMMC 32G** | ⚠️ 硬件在、**引导未验** | `mmc0: new HS400 Enhanced strobe MMC card` → `SLD32G 28.9 GiB`，`mmcblk0` 30310400 块可读。但**从 eMMC 启动从未成功过** |
+| **eMMC 32G** | ✅ 硬件 + **引导已验** | `mmc0: new HS400 Enhanced strobe MMC card` → `SLD32G 28.9 GiB`；Maskrom 写入整包后 **tty8 首次从 eMMC 挂上 root**（`VFS: Mounted root (ext4 filesystem) on device 179:2`，`mmc@fe330000.bootdev.part /boot.scr`） |
 | **USB** | ✅ | 2×xHCI(SS) + 2×EHCI + 2×OHCI；microSD 读卡器识别为 `sda`（3.7 GB） |
 | USB 介质引导 | ✅ | U-Boot 默认链含 `usb`，零配置找到 `/boot.scr`（⚠️ 板载 SD 卡槽 `mmc1` 未验证） |
 | **WiFi** | ✅ | 固件起来 `version 7.84.17.1`，**无 `HT Avail timeout`**；`iw dev wlan0 scan` 扫到 15 个 BSS。MAC `08:fb:ea:65:f8:da`，与 Armbian 下同一颗芯片一致 |
@@ -98,6 +136,8 @@
 | rootfs/overlay | ✅ | ext4 → f2fs overlay |
 | CPU | ✅ | `SMP: Total of 6 processors activated` |
 | **Maskrom 恢复** | ✅ | 官方 `rk3399_loader` + Armbian 引导程序救回过一次起不来的板子 |
+| **Maskrom 写 eMMC** | ✅ | `rkdeveloptool db loader` + `wl 0 <整包>` 写入成功，板子从 eMMC 引导 |
+| **DRAM 参数（`rockchip,sdram-params`）** | ✅ **已修且生效** | TPL 打出 `lpddr4_set_rate` + 两通道各 `Size=2048MB`（2026-10-06）。⚠️ 但**同一份 TPL 会导致随机 panic**，见顶部状态节 |
 
 ### 主动划出范围
 
@@ -113,15 +153,20 @@
 
 ## 还剩什么
 
-**eMMC 安装**是唯一还没做过的安装验证（`dd` 流程已核对，见
-[docs/flashing.md](docs/flashing.md)）。其余硬件项都已实测。
+**本移植 U-Boot 的随机 panic 是唯一还没解决的问题**，而且它比别的都重要 —— 引导程序
+不稳定意味着镜像不能算可交付。已定位到 DRAM 初始化这一层，但**在拿到 Armbian 的
+U-Boot 源码比对之前不要改参数**，那只会是猜。详见
+[docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
 
-⚠️ eMMC 上现在是一套 Armbian（单个 29280 MiB 的 ext4）。`dd` 会覆盖它 —— 这件事**已经
-发生过一次**，代价是丢了原来那套 Armbian。这次要保留就先备份。
+**eMMC 安装**已通过 Maskrom 写入整包验证（tty8 挂上 root），`dd` 流程另见
+[docs/flashing.md](docs/flashing.md)。
+
+⚠️ eMMC 上现在是 OpenWrt 镜像（p1 16 MiB + p2 512 MiB，磁盘标识 `0x5452574f`）。
+早先那套 Armbian 在之前的实验里已被覆盖过一次且没有备份。
 
 ---
 
-## 上机验证（六次）
+## 上机验证（七次）
 
 | 次 | 镜像 | 结果 |
 |---|---|---|
@@ -131,9 +176,10 @@
 | 4 | `9932b3da` | 删 gpio-keys + 包集合修正 → 全部符合预期 |
 | 5 | `50092eba` | 加 43456 固件包 → 固件上传成功，芯片不启动 |
 | 6 | `aaf2298` 树 | 补 `&spi1` + `flash@0` → SPI 在 OpenWrt 下可见，同时查明**读不到正确内容** |
+| 7 | `5a09fc41` | Maskrom 写入 eMMC → **本移植 U-Boot 首次真机执行**：DRAM 初始化成功，但 6 次启动 3 次 panic |
 
-⚠️ **第 5 次的"芯片不启动"是当时的状态，后来修好了**（`lpo` → `ext_clock`）。第 6 次才是
-当前的镜像状态。
+⚠️ **第 5 次的"芯片不启动"是当时的状态，后来修好了**（`lpo` → `ext_clock`）。第 7 次才是
+当前镜像的状态，而它暴露了 U-Boot 的 DRAM 问题。
 
 第四次的关键验证点：
 
@@ -185,12 +231,16 @@
       （同时查明 Linux 读不到它的正确内容）
 - [x] Phase 5j：文档准确性复核 —— 逐条比对真机实测
 - [x] Phase 5k：文档按用途拆分，新增 `AGENTS.md`
+- [x] Phase 5g：**本移植的 U-Boot 上真机复验** —— Maskrom 写入 eMMC 后首次执行，
+      `rockchip,sdram-params` 修复**确认生效**（两通道各 2048MB）
+- [x] Phase 6：eMMC 安装验证 —— **已通过**（tty8 从 `mmc@fe330000` 挂上 root）
+- [x] Phase 5l：诊断随机 panic —— 12 次启动对照实验，根因缩小到 DRAM 初始化
+- [ ] **Phase 5m（最高优先级）：修 DRAM 初始化** —— 6 次启动 3 次 panic，镜像因此
+      不能算可交付。需先拿到 Armbian 的 U-Boot 源码比对，**不要凭猜测改参数**
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
-- [ ] Phase 6：eMMC 安装验证 —— **从未在 eMMC 上跑过**
-- [ ] Phase 5g：**本移植的 U-Boot 上真机复验** —— **有意保留为未验证**，三条路实测
-      排除后只剩 Maskrom 写 SPI，决定不写
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）
+      ⚠️ **在 DRAM 问题解决之前不要提** —— 提交一个引导不稳定的移植不合适
 
 ---
 

@@ -62,15 +62,34 @@ revert the port.
 ## Naming verified vs unverified
 
 Anything in a table of results must come from hardware. If a claim is inferred from a
-build artefact, label it as such. Three claims in this repo were wrong for the same
+build artefact, label it as such. Four claims in this repo were wrong for the same
 reason — recorded as true when the finding was made, never revisited:
 
 - "the image carries no bootloader" (it does — LBA 0x40 and LBA 0x4000)
 - "shorting the SPI pins makes the boot ROM skip SPI" (measured: it does not)
 - "the WiFi chip refuses to run firmware" (fixed by one property name, since resolved)
+- "the port's bootloader has never run" (it has — maskrom writes eMMC without touching
+  SPI, which was a fourth route nobody considered)
 
 Documentation here goes stale faster than anyone remembers. When you change behaviour on
 hardware, re-read the affected passages in the same pass.
+
+## The port's own U-Boot is not trustworthy yet
+
+**This is the highest-priority open problem.** It boots, and `rockchip,sdram-params`
+works — but it panics 3 times out of 6 boots, always with a function pointer pointing at
+non-code. The same kernel, dtb and rootfs boot reliably under Armbian's TPL, so the fault
+is in DRAM initialisation. See [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md).
+
+- **Do not ship this port's bootloader** until it survives at least 6 consecutive boots.
+  One successful boot out of six proves nothing.
+- **Do not change the DRAM parameters on a hunch.** The current choice
+  (`rk3399-sdram-lpddr4-100.dtsi`) is the same file upstream uses for the ROCK 4C+, so
+  the selection is not obviously wrong. Get Armbian's U-Boot tree and diff first.
+- **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`), which leaves the working SPI
+  bootloader alone and gives a stable control group. Prefer it over writing SPI.
+- **Do not propose an upstream PR** until this is fixed — a port with an unstable
+  bootloader is not worth submitting.
 
 ## Board facts worth knowing before you touch the device tree
 
@@ -133,11 +152,11 @@ preview path is what caught two bugs in the destructive one.
 
 Two specific footguns worth knowing before you touch hardware:
 
-- **eMMC currently holds a working Armbian install** (one 29280 MiB ext4). `dd`-ing the
-  OpenWrt image destroys it, irreversibly, and that has already happened once with no
-  backup. Read it read-only first. See [docs/hardware.md](docs/hardware.md#emmc-当前状态实测).
-- **`deploy.sh` defaults to the squashfs image.** The board currently runs ext4. Pass the
-  variant explicitly or you will flash a different image than the one you tested.
+- **eMMC currently holds the OpenWrt image** (p1 16 MiB + p2 512 MiB, disk signature
+  `0x5452574f`). An Armbian install that was there earlier was destroyed by a `dd` with
+  no backup. Read it read-only first if you need to know what is on it.
+- **`deploy.sh` defaults to the squashfs image.** The board has been running ext4. Pass
+  the variant explicitly or you will flash a different image than the one you tested.
 
 ## House conventions
 

@@ -51,16 +51,29 @@ sysupgrade 镜像是 DOS/MBR，分区布局：
 > ⚠️ 查这一段时容易踩的坑：**只看偏移 0 会误判成"镜像里根本没有引导程序"**。
 > 偏移 0 只有 MBR 和零。
 
-### 但它从未被执行过
+### 它已经被执行过了 —— 但会随机 panic
 
-在**贴了 SPI 的板子**上，这份引导程序一次都没被运行过 —— SPI 排第一，读到 SPI 就不看
-别处了。
+⚠️ **本节原先写着"它从未被执行过"，那是 2026-10-06 的状态，已过时。**
 
-所以"镜像自带引导程序"目前**只对不贴 SPI 的 V1.73 量产板有意义**，而那类板恰好是
-**唯一没被验证过的组合**。
+2026-10-06 用 Maskrom 把整包写进 eMMC（`rkdeveloptool wl 0 <镜像>`），SPI 上那份
+Armbian 引导程序被绕过，**镜像自带的那份在真机上执行了**。
 
-⚠️ 这也是本移植的 U-Boot 至今未在真机运行过的根本原因，见
-[postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) 的「为什么这个未验证项就停在这里」。
+结果分两半：
+
+| | 结论 |
+|---|---|
+| ✅ `rockchip,sdram-params` 修复**生效** | TPL 打出完整 LPDDR4 训练过程，两通道各 2048MB |
+| ❌ 但**会随机 panic** | 6 次启动 3 次内核 panic，三次都是"函数指针被指向垃圾地址" |
+
+决定性对照：**同样的内核、同样的 dtb（哈希逐字节相同）、同样的 rootfs**，
+Armbian 的 TPL 6 次零 panic，本移植的 TPL 3 次 panic —— 唯一变量是 TPL。
+
+所以根因在 **DRAM 初始化**这一层。完整证据链见
+[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+
+⚠️ **原来的推断方向反了。** 早先推断"这份引导程序只对不贴 SPI 的量产板有意义，而
+那类板恰好是唯一没被验证过的组合"—— 现在它验证过了，结论是**能启动但会崩**。
+所以问题不是"能不能引导"，而是"DRAM 参数是否有缺陷"。
 
 ---
 
@@ -231,24 +244,43 @@ U-Boot 读得对（能起、能读 env），Linux 读不对 —— 而**硬件�
 | | 状态 |
 |---|---|
 | Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader` + Armbian 引导程序） |
-| SPI 上现有的引导程序 | Armbian U-Boot（救回时刷的，可用） |
-| 本移植的 U-Boot 是否跑过 | ❌ **一次都没有** |
-| 为什么没跑 | 三条路都实测排除，只剩 Maskrom 写 SPI —— **决定不写** |
-| OpenWrt 从 microSD 启动 | ✅ 已验证（用 Armbian 的 U-Boot 引导） |
+| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`），且**不碰 SPI** |
+| SPI 上现有的引导程序 | Armbian U-Boot（救回时刷的，可用，**6 次启动零 panic**） |
+| 本移植的 U-Boot 是否跑过 | ✅ **跑过了** —— 但 **6 次启动 3 次内核 panic** |
+| `rockchip,sdram-params` 修复 | ✅ **确认生效**（TPL 打出 `lpddr4_set_rate` + 两通道各 2048MB） |
+| OpenWrt 从 microSD 启动 | ✅ 已验证（Armbian U-Boot 引导，稳定） |
+| OpenWrt 从 eMMC 启动 | ✅ 已验证（tty8，本移植 U-Boot，但那次之后又崩了） |
 | 从运行中系统读写 SPI | ❌ 不可能（读不对，无法验证） |
 | Linux 读不对的确切原因 | ❌ **未确认**（2026-10-07 排除 6 项后仍未定位；下一步是 U-Boot `sf read` 取 ground truth） |
 
-**风险落在哪**：这块板不受影响 —— SPI 里是能用的引导程序，OpenWrt 已实测从 microSD
-完整启动。**⚠️ 风险在不贴 SPI 的 V1.73 量产板上** —— 那类板 boot ROM 没有 SPI 可退，
-只能依赖镜像自带的那份，而那份恰好是唯一没跑过的东西。
+### ⚠️ 本移植的 U-Boot 会导致随机 panic
 
-**SPI 在这块板上既是麻烦（挡路）也是保护（提供一份能用的引导程序）。**
+**镜像自带的那份引导程序已经在真机上执行过，DRAM 参数修复确实生效** —— 但同一份 TPL
+在 6 次启动里造成 3 次内核 panic（三次都是"函数指针被指向垃圾地址"）。
+
+决定性对照：**同样的内核、同样的 dtb（哈希逐字节相同）、同样的 rootfs**：
+
+| 引导程序 | 启动次数 | 挂上 root | panic |
+|---|---|---|---|
+| Armbian U-Boot | 6 | 2 | **0** |
+| 本移植 U-Boot | 6 | 1 | **3** |
+
+所以根因在 **DRAM 初始化**这一层，不是软件逻辑。完整证据链见
+[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+
+⚠️ **风险的分布变了。** 早先写"风险在不贴 SPI 的量产板上，那类板只能靠镜像自带那份"
+—— 现在那份确实能启动，但**不稳定**。所以问题不再是"能不能引导"，而是
+"引导程序的 DRAM 参数是否有缺陷"。
+
+**SPI 在这块板上仍然是保护**（Armbian 那份稳定可用），但**不能再把它说成"唯一的
+兜底"** —— 兜底本身也有 DRAM 稳定性问题，只是它没暴露。
 
 ---
 
 ## 相关文档
 
 - [hardware.md](hardware.md) — 硬件事实、板型辨识、按键、介质
-- [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) — 变砖的完整排查记录
+- [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) — 变砖的根因（缺 DRAM 参数）与修复
+- [postmortem-dram-instability.md](postmortem-dram-instability.md) — 修好之后发现的随机 panic
 - [flashing.md](flashing.md) — 恢复流程的操作步骤
 - [device-tree.md](device-tree.md) — 内核与 U-Boot 的设备树策略

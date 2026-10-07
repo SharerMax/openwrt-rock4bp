@@ -383,26 +383,19 @@ sysupgrade 会把 U 盘当成升级目标，等于覆盖你自己的启动盘。
 —— **那是错的**，当时的结论来自启动日志里没有分区名，**而没有实际去读**。
 只读挂载一看就清楚了 —— 而且**从启动日志读不出来**：日志里看不到分区名，不代表盘上是空的。
 
-**当前实测状态（2026-10-06）** —— eMMC 上是一套 **Armbian**：
+**eMMC 布局的变迁**（这一节改过两次）：
+一套完整 Armbian → 被 `dd` 覆盖、无备份 → 重装 Armbian（单个 29280 MiB ext4）→
+**现在是 OpenWrt 镜像**（p1 16 MiB + p2 512 MiB，磁盘标识 `0x5452574f`）。
 
-```
-/proc/partitions
-  179 0   30310400  mmcblk0        ← 28.9 GiB
-  179 1   29982720  mmcblk0p1      ← 单个 29280 MiB 分区，不是 OpenWrt 镜像的布局
+⚠️ **原始那套 Armbian（内核 6.18.54、hostname `rockpi-4b`、1.5 GB、含用户 `rock`
+家目录）在 2026-10-06 被覆盖且没有备份。** 那次是在明确告知后选择直接覆盖的。
 
-mmcblk0  MBR 签名 55 aa 有效
-mmcblk0p1 offset 1080 处: 53 ef    ← ext4 superblock magic
-```
+⚠️ **p2 之后约 28 GB 是空的** —— 镜像只占 576 MiB。
 
-⚠️ **那套 Armbian 已经被覆盖过一次，没有备份。** 原始那块 eMMC 上装的是完整的
-Armbian 26.11.0-trunk.62（内核 6.18.54、hostname `rockpi-4b`、1.5 GB、含用户 `rock`
-家目录），**2026-10-06 执行 `dd` 时是在明确告知后选择直接覆盖的**，代价是那套系统和
-`/home/rock` 永久消失。现在盘上这套是后来重装的。
-
-**所以下次要 `dd`，先备份。** 先只读地看清里面是什么：
+**所以要覆盖，先备份。** 先只读地看清里面是什么：
 
 ```sh
-mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc
+mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p2 /mnt/emmc
 ls -la /mnt/emmc
 cat /mnt/emmc/etc/os-release 2>/dev/null | head -3
 ls -la /mnt/emmc/boot/ /mnt/emmc/home/ 2>/dev/null
@@ -476,10 +469,15 @@ Rockchip 的 U-Boot TPL 不从那里读，动了反而可能出问题。
 
 ### 装完如何确认真的从 eMMC 引导
 
-⚠️ **这条从未验证过。** eMMC 引导至今没有真机证据。
+✅ **已验证过一次**（tty8，2026-10-06，Maskrom 写整包）：`mmc@fe330000.bootdev.part
+/boot.scr` → `VFS: Mounted root (ext4 filesystem) on device 179:2`。
 
-⚠️ **两个介质同时插着也能启动**，所以**要验证必须先拔掉 microSD/读卡器**，否则
-无法区分引导源：
+⚠️ **但那次之后同一份镜像又出现了随机 panic**（6 次启动 3 次崩）。所以
+"能从 eMMC 引导"已验证，**"能稳定引导"没有** —— 见
+[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+
+⚠️ **两个介质同时插着也能启动**（`BOOT_TARGETS` 里 `mmc0` 排在 `usb` 之前），
+所以要确认引导源，**必须先拔掉 microSD/读卡器**：
 
 ```sh
 # 断电、拔掉 microSD、上电，然后：
@@ -487,11 +485,10 @@ sed 's/.*root=//;s/ .*//' /proc/cmdline     # 不再是 PARTUUID=...-02
 cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
 ```
 
-⚠️ 注意当前 SPI 上是 **Armbian 的 U-Boot**，不是本移植编出来的那份。它的
-`BOOT_TARGETS` 里 `mmc0` 排在 `usb` 之前，所以这条路**原理上现在是通的** —— 但那只说明
-"Armbian 的 U-Boot 会引导 eMMC"，**不能用来证明本移植的引导程序可用**（那份从未被执行）。
+⚠️ 注意 SPI 上是 **Armbian 的 U-Boot**（稳定，6 次零 panic）。它引导 eMMC 只说明
+"Armbian 的 TPL 能引导 eMMC"，**不能用来证明本移植的引导程序可用**。
 
-如果 `dd` 完起不来，回退方式：插 microSD。U-Boot 的 boot 链会自动往后走到 `usb`
+如果起不来，回退方式：插 microSD。U-Boot 的 boot 链会自动往后走到 `usb`
 （这条已经多次走通）。
 
 ### 最后一层兜底：Maskrom 模式
@@ -569,18 +566,27 @@ CRC 坏了所以用默认环境变量 —— 而默认的 `BOOT_TARGETS` 已经�
 
 ### 当前状态（2026-10-06）
 
-**板子已恢复可用，SPI 上是 Armbian 的 U-Boot。** 这一节保留下来是因为流程仍然有效，
-而且下面几条结论是**实测排除**的，将来不必再走一遍。
+**板子已恢复可用。SPI 上是 Armbian 的 U-Boot（稳定），eMMC 上是本移植的引导程序
+（不稳定）。** 这一节保留下来是因为流程仍然有效，而且下面几条结论是**实测排除**的。
 
 | | 状态 |
 |---|---|
 | Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader` + Armbian 引导程序） |
-| 本移植的 U-Boot 是否跑过 | ❌ **一次都没有** |
-| 为什么没跑 | 三条路都实测排除，只剩 Maskrom 写 SPI 一条 —— **决定不写**，SPI 上保留那份可用的 |
-| 风险落在哪 | 这块板不受影响（OpenWrt 已从 microSD 完整启动）；**⚠️ 风险在不贴 SPI 的 V1.73 量产板上**，那类板只能靠镜像自带那份 |
+| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`），**不碰 SPI** |
+| 本移植的 U-Boot 是否跑过 | ✅ **跑过了** —— `rockchip,sdram-params` 修复确认生效 |
+| ⚠️ 但**稳定性** | ❌ **6 次启动 3 次内核 panic**（函数指针被指向垃圾地址） |
+| 根因 | **DRAM 初始化** —— 同样的内核/dtb/rootfs 用 Armbian 的 TPL 零 panic |
+| 风险落在哪 | ⚠️ **不限于这台板子** —— 任何用这份引导程序的板子都有 50% 概率 panic |
 
-**要关闭这一项**：用 Maskrom 把 `idbloader-spi.img` + `u-boot.itb` 写进 SPI，
-上电看串口第一行是否变成 `U-Boot TPL 2025.10-OpenWrt-…`。失败按同一流程刷回
+⚠️ **早先写"决定不写 SPI，保留那份可用的"是对的**，但理由变了：不是"我们的引导程序
+没验证过"，而是"**我们的引导程序验证出问题了**"。写 SPI 只会把一个不稳定的引导程序
+放到所有板子的启动路径上。
+
+**当前该做的**：拿到 Armbian 的 U-Boot 源码，比对它的 `rk3399-sdram-*.dtsi` 和
+`drivers/ram/rockchip/`，找出差异。**在比对之前不要改参数。**
+
+如果确实要用 Maskrom 写 SPI：把 `idbloader-spi.img` + `u-boot.itb` 写进去，上电看串口
+第一行是否变成 `U-Boot TPL 2025.10-OpenWrt-…`。失败按同一流程刷回
 Armbian（SPI 上只有引导程序，完全可从镜像文件复现）。
 
 ### 症状：串口只到 TPL 就停
