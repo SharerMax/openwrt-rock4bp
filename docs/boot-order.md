@@ -65,10 +65,12 @@ Armbian 引导程序被绕过，**镜像自带的那份在真机上执行了**�
 | ✅ `rockchip,sdram-params` 修复**生效** | TPL 打出完整 LPDDR4 训练过程，两通道各 2048MB |
 | ❌ 但**会随机 panic** | 6 次启动 3 次内核 panic，三次都是"函数指针被指向垃圾地址" |
 
-决定性对照：**同样的内核、同样的 dtb（哈希逐字节相同）、同样的 rootfs**，
-Armbian 的 TPL 6 次零 panic，本移植的 TPL 3 次 panic —— 唯一变量是 TPL。
+⚠️ **那个"决定性对照"有两个共变变量** —— 引导程序换了，**引导介质也换了**
+（Armbian 全是从 U 盘，本移植全是从 eMMC），两个维度完全共变，**不能**据此断定
+是 TPL 的问题。
 
-所以根因在 **DRAM 初始化**这一层。完整证据链见
+而且逐层比对 v2022.07（Armbian）之后：**DRAM 参数逐字节相同、DRAM 的 CONFIG 相同、
+板级 dtsi 相同**，93 KB 的驱动只差 3%。**根因未定位。** 完整证据链见
 [postmortem-dram-instability.md](postmortem-dram-instability.md)。
 
 ⚠️ **原来的推断方向反了。** 早先推断"这份引导程序只对不贴 SPI 的量产板有意义，而
@@ -159,6 +161,28 @@ SPI 里能搜到 eMMC 引导程序的 64 字节片段：      0 处（探了 39 
 ```
 
 **SPI dump 里一个字节的 eMMC 引导程序都找不到。**
+
+### ⚠️ 2026-10-08 补测：Armbian 内核也读不对，而且 dump 里没有 FDT
+
+用**另一套内核**（Armbian 26.11.0 / Linux 6.18.54，SPI 可见为 `mtd0`，4096 KiB）复测：
+
+```
+同一块 64 KiB 连读两次：
+  读1: 106b3534fbadf7612b2cf65ea2acb48c
+  读2: b85c3f4fbb9caac7c148924a680f2f92      ==> 两次不同
+strings -n 12 /dev/mtd0 | wc -l  ==> 0
+```
+
+**两次读结果不同**，而且**一条 ≥12 字符的字符串都没有**。所以：
+
+1. ⚠️ **这不是 OpenWrt 内核的问题。** 两套完全不同的内核（6.12 与 6.18）都读不对，
+   指向 SPI 读路径本身 —— pinctrl、时钟、驱动模型的某处。
+2. ⚠️ **`recovery/spi-working-armbian.bin` 不能当参考物。** 扫遍整份 4 MiB，
+   **FDT magic（`d0 0d fe ed`）出现 0 次** —— 一份正常的 U-Boot 至少带 3 个 DTB。
+   之前用它当"Armbian 引导程序的样子"是靠不住的。
+3. ⚠️ **仍然缺的那份 ground truth**：SPI 上真实的 `idbloader` + `u-boot.itb`。
+   U-Boot 的 `sf read` 是唯一已知的可靠读法，而进 U-Boot 命令行需要实物 TTL
+   适配器接 UART2（1500000 8N1）。
 
 | | SPI dump | eMMC 前 4 MiB |
 |---|---|---|

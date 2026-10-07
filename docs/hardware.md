@@ -165,24 +165,29 @@ mmcblk0p1 前 4 MiB 里的字符串:
   /usr/bin/which.debianutils
 ```
 
-### 现在：OpenWrt 镜像
+### 2026-10-08：又装回 Armbian
 
-2026-10-06 用 Maskrom 写入整包（`rkdeveloptool wl 0 <镜像>`）：
+⚠️ **10-06 那次 Maskrom 写进去的 OpenWrt 镜像已经不在盘上了。** 现在是重装的
+Armbian 26.11.0-trunk.62（来自 `armbian/build`，内核 6.18.54，hostname `rockpi-4b`）：
 
 ```
-179 1   32768   mmcblk0p1      ← 16 MiB
-179 2  1048576  mmcblk0p2      ← 512 MiB
-磁盘标识 0x5452574f，root=PARTUUID=5452574f-02
+mmcblk0   28.9G
+└─mmcblk0p1  28.6G  ext4  /        ← 单个分区，不是 OpenWrt 的 p1/p2 布局
+/proc/cmdline: root=UUID=7043da66-b456-4a16-99c4-d7610de391c0
+               ubootpart=d2a80aa7-01
 ```
 
-**eMMC 引导已验证**（tty8）：`mmc@fe330000.bootdev.part /boot.scr` →
-`VFS: Mounted root (ext4 filesystem) on device 179:2`。
+**引导路径：SPI 里的 Armbian U-Boot → eMMC**（`ubootpart` 指向 eMMC 分区）。
+dmesg 只有 3 条已知无害报错（PCIe `-110`、uart DMA、sound deferred probe），
+无内存错误。板子可达 `192.168.3.184`，`root` / `armbian`。
 
-⚠️ 那次跑的是**本移植的引导程序**，之后同一份镜像又出现了随机 panic（6 次 3 次崩）——
-引导路径可用，但稳定性有问题。见
-[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+这是补上「Armbian TPL + eMMC 引导」那格对照的第一份数据 —— **只 1 次**，
+而判据是 6 次。
 
-⚠️ **p2 之后约 28 GB 是空的** —— 镜像只占 576 MiB。要保留任何东西得先备份。
+### ⚠️ 这一节改过四次，每次状态都不同
+
+写任何"eMMC 上是什么"之前，先只读地读一遍
+(`lsblk` / `/proc/partitions` / `/proc/cmdline`)，不要相信文档里任何一行。
 写入方式见 [flashing.md](flashing.md)。
 
 ---

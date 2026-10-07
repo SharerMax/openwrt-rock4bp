@@ -383,19 +383,32 @@ sysupgrade 会把 U 盘当成升级目标，等于覆盖你自己的启动盘。
 —— **那是错的**，当时的结论来自启动日志里没有分区名，**而没有实际去读**。
 只读挂载一看就清楚了 —— 而且**从启动日志读不出来**：日志里看不到分区名，不代表盘上是空的。
 
-**eMMC 布局的变迁**（这一节改过两次）：
-一套完整 Armbian → 被 `dd` 覆盖、无备份 → 重装 Armbian（单个 29280 MiB ext4）→
-**现在是 OpenWrt 镜像**（p1 16 MiB + p2 512 MiB，磁盘标识 `0x5452574f`）。
+**eMMC 布局的变迁**（这一节改过四次）：
+一套完整 Armbian → 被 `dd` 覆盖、无备份 → 重装 Armbian → 10-06 写入 OpenWrt 镜像
+（Maskrom 整包，p1 16 MiB + p2 512 MiB）→ **10-08 又装回 Armbian**。
 
-⚠️ **原始那套 Armbian（内核 6.18.54、hostname `rockpi-4b`、1.5 GB、含用户 `rock`
-家目录）在 2026-10-06 被覆盖且没有备份。** 那次是在明确告知后选择直接覆盖的。
+⚠️ **2026-10-08 当前实测** —— 单个 28.6 GB ext4，`root=UUID=7043da66-…`：
 
-⚠️ **p2 之后约 28 GB 是空的** —— 镜像只占 576 MiB。
+```
+lsblk
+  mmcblk0   28.9G
+  └─mmcblk0p1  28.6G  ext4  /
+```
 
-**所以要覆盖，先备份。** 先只读地看清里面是什么：
+⚠️ **不要相信上面的变迁描述** —— 每次状态都不同。动手前先只读地读：
 
 ```sh
-mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p2 /mnt/emmc
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT,PARTLABEL
+cat /proc/cmdline | tr ' ' '\n' | grep -E "root=|ubootpart="
+```
+
+⚠️ **原始那套 Armbian（1.5 GB、含用户 `rock` 家目录）在更早的一次 `dd` 里被覆盖且
+没有备份。**
+
+**覆盖之前先备份。** 先只读地看清里面是什么：
+
+```sh
+mkdir -p /mnt/emmc && mount -o ro /dev/mmcblk0p1 /mnt/emmc
 ls -la /mnt/emmc
 cat /mnt/emmc/etc/os-release 2>/dev/null | head -3
 ls -la /mnt/emmc/boot/ /mnt/emmc/home/ 2>/dev/null

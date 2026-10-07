@@ -76,20 +76,30 @@ hardware, re-read the affected passages in the same pass.
 
 ## The port's own U-Boot is not trustworthy yet
 
-**This is the highest-priority open problem.** It boots, and `rockchip,sdram-params`
-works — but it panics 3 times out of 6 boots, always with a function pointer pointing at
-non-code. The same kernel, dtb and rootfs boot reliably under Armbian's TPL, so the fault
-is in DRAM initialisation. See [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md).
+**This is the highest-priority open problem, and the cause is NOT located.** It boots, and
+`rockchip,sdram-params` works — but it panics 3 times out of 6 boots, always with a
+function pointer pointing at non-code. See
+[docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md).
 
 - **Do not ship this port's bootloader** until it survives at least 6 consecutive boots.
   One successful boot out of six proves nothing.
-- **Do not change the DRAM parameters on a hunch.** The current choice
-  (`rk3399-sdram-lpddr4-100.dtsi`) is the same file upstream uses for the ROCK 4C+, so
-  the selection is not obviously wrong. Get Armbian's U-Boot tree and diff first.
+- **The obvious hypothesis is already dead.** `rk3399-sdram-lpddr4-100.dtsi` is
+  byte-identical between v2022.07 (Armbian) and v2025.10 (this port) — sha256
+  `2874c640…`. Same DRAM CONFIGs, same board dtsi, and the driver differs by 3%. The
+  "50MHz vs 400MHz" serial-output difference is an artefact of where `base.ddr_freq`
+  is assigned relative to the printf, not a difference in training frequency.
+- **The one real difference found**: v2025.10 moves the LPDDR4 switch to 400MHz to
+  *before* `set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` /
+  `dram_all_config`. v2022.07 configured all of that at the dtsi rate and bumped the
+  frequency only at the end. That is upstream mainline code, so reverting it may break
+  other boards.
+- **Count your variables before claiming a cause.** The tty11-vs-tty12 comparison changed
+  the bootloader *and* the boot medium at the same time; they are perfectly collinear. It
+  does not support "the TPL is at fault". The empty cells are our TPL booting from USB,
+  and Armbian's TPL booting from eMMC (one data point).
 - **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`), which leaves the working SPI
-  bootloader alone and gives a stable control group. Prefer it over writing SPI.
-- **Do not propose an upstream PR** until this is fixed — a port with an unstable
-  bootloader is not worth submitting.
+  bootloader alone. Prefer it over writing SPI.
+- **Do not propose an upstream PR** until this is fixed.
 
 ## Board facts worth knowing before you touch the device tree
 
@@ -152,9 +162,14 @@ preview path is what caught two bugs in the destructive one.
 
 Two specific footguns worth knowing before you touch hardware:
 
-- **eMMC currently holds the OpenWrt image** (p1 16 MiB + p2 512 MiB, disk signature
-  `0x5452574f`). An Armbian install that was there earlier was destroyed by a `dd` with
-  no backup. Read it read-only first if you need to know what is on it.
+- **eMMC currently holds Armbian again** (reinstalled 2026-10-08: one 28.6 GB ext4,
+  `root=UUID=7043da66-…`), reachable at `192.168.3.184` as `root`/`armbian`. An OpenWrt
+  image was written there on 10-06 and an earlier Armbian was destroyed by a `dd` with no
+  backup. This line has been rewritten three times; read it read-only before writing.
+- **Linux cannot read this SPI flash correctly, on any kernel.** Armbian 6.18.54 gives two
+  different md5 sums for two consecutive reads of the same 64 KiB and zero strings ≥12
+  chars. So `recovery/spi-working-armbian.bin` is not real U-Boot data — it contains zero
+  FDT magics. Do not use it as a reference.
 - **`deploy.sh` defaults to the squashfs image.** The board has been running ext4. Pass
   the variant explicitly or you will flash a different image than the one you tested.
 

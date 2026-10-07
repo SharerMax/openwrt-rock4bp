@@ -277,14 +277,18 @@ TPL 变大是因为设备树里多了那个参数块。**两次独立构建产�
 
 **未解决**（⚠️ 由上面第三条引出，是当前最高优先级的问题）：
 - ❌ **本移植的 U-Boot 会导致随机 panic** —— 6 次启动 3 次内核 panic，
-  三次都是"函数指针被指向垃圾地址"。**同样的内核/dtb/rootfs 用 Armbian 的 TPL
-  零 panic**，唯一变量是 TPL，所以根因在 DRAM 初始化。
+  三次都是"函数指针被指向垃圾地址"。⚠️ **但那个"决定性对照"有两个共变变量** ——
+  引导程序换了，**引导介质也换了**（Armbian 全从 U 盘，本移植全从 eMMC），
+  **不能**据此断定是 TPL 的问题。
   完整证据链见 [postmortem-dram-instability.md](postmortem-dram-instability.md)。
-- ⚠️ **LPDDR4 参数是否与板上的实际颗粒匹配** —— 选型依据是与同规格板子的 mainline
-  用法一致（`rk3399-sdram-lpddr4-100.dtsi`，与上游 `rk3399-rock-4c-plus-u-boot.dtsi`
-  同一个文件），不是对本板颗粒的实测。**而 panic 指向这里。**
-- ⚠️ **ARM64 与 U-Boot 版本差异** —— 本移植用 2025.10，Armbian 用 2022.07。
-  `drivers/ram/rockchip/` 之间可能有实质变动，而 dtsi 只是参数。**下一步该查这个。**
+- ❌ **~~DRAM 参数不同~~ 已排除** —— `rk3399-sdram-lpddr4-100.dtsi` 在 v2022.07 与
+  v2025.10 **逐字节相同**（sha256 `2874c640…`）。DRAM 的 CONFIG 也相同，板级 dtsi
+  也相同。
+- ⚠️ **唯一剩下的差异**：v2025.10 把 LPDDR4 切 400MHz 挪到了
+  `set_memory_map` / `calculate_ddrconfig` / `dram_all_config` **之前**；
+  v2022.07 是在 dtsi 频率下配完再升频。上游 mainline 代码，**未验证是否相关**。
+- ⚠️ **U-Boot 版本差异已查**（2026-10-08）：`drivers/ram/rockchip/sdram_rk3399.c`
+  两版只差 +64/−48 行（93 KB 的 3%），**不是"可能有实质变动"那种程度**。
 
 **已撤回的说法**：
 - ❌ 「本移植的 U-Boot 一次都没上过真机」—— 2026-10-06 通过 Maskrom 写 eMMC 执行了
