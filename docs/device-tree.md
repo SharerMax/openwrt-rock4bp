@@ -94,10 +94,18 @@ DTS 88 → 128 行（补 override）→ 130 行（删 gpio-keys）→ **当前 1
 ```
 
 ⚠️ `spi-max-frequency` 用的是 **10 MHz**，和本移植 U-Boot 的配置对齐。
+2026-10-07 在真机 live DT 上复核过：属性值确实是 `0x00989680`（10 000 000），
+`&spi1` 节点是 `spi@ff1d0000`、`status=okay`、`reg=0xff1d0000/0x1000`，
+pinctrl 四组（pin 39-42，`spi1-rx/tx/clk/cs0`）全部归 `ff1d0000.spi` 所有。
+**节点本身没有任何问题** —— 见 [boot-order.md](boot-order.md) 的排除表。
 
-⚠️ 但**加了节点不等于能读对** —— 实测这块 SPI 在 Linux 下读回来的不是芯片内容，
+⚠️ 但**加了节点不等于能读对** —— 实测这块 SPI 在 Linux 下读回来的不是芯片内容
+（与 eMMC 上同一份 Armbian 引导程序对比：0 处命中）。
 `build.sh` 的 `dtb exposes the SPI flash` 校验项只检查节点存在，对那种情况完全无感。
 详见 [boot-order.md](boot-order.md#linux-从这块-spi-读不到正确的内容)。
+
+> ⚠️ 排查时踩过的坑：**这块板上 `od` 不存在**。用 `od -An -tx4` 读设备树二进制属性
+> 会全部输出为空，看起来像"属性没写"。设备树的 u32 属性一律用 `hexdump` 读。
 
 ---
 
