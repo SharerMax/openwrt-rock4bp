@@ -281,7 +281,64 @@ dtsi 里 `base.ddr_freq` 位于扁平 u32 数组的**下标 34**（`sdram_cap_in
 那些补丁不在我们手上。⚠️ 这条线到此为止：我们只能把顺序改回 mainline v2022.07 的样子，
 **改不成 Armbian 的确切行为**。
 
-### 排除四、五、六：另外三条我怀疑过、然后自己查掉的机制
+### 排除四：跑实验排除 —— ❌ 不是 DRAM 初始化（2026-10-08）
+
+上面那个唯一剩下的差异做成了补丁并上机测了。结果：**2 次启动，2 次 panic，没修好。**
+
+补丁：`0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`
+
+串口输出确认补丁生效 —— `50MHz` 出现在 `lpddr4_set_rate` **之前**（补丁前是 400MHz 在前）：
+
+```
+Channel 0: LPDDR4, 50MHz          ← 补丁前这里打印 400MHz，且在 set_rate 之后
+BW=32 Col=10 Bk=8 CS0 Row=16 CS=1 Die BW=16 Size=2048MB
+256B stride
+lpddr4_set_rate: change freq to 400MHz 0, 1
+lpddr4_set_rate: change freq to 800MHz 1, 0
+```
+
+⚠️ **故障一点没变。** tty13 第二次启动与 tty12 **完全同源**：
+
+| | tty12 | tty13 #2 |
+|---|---|---|
+| ESR | `0000000086000004` | `0000000086000004` |
+| PC | `0xdfff800080099ee4` | `0xdfff800080099ee4` |
+| lr | `__wake_up_common+0x8c/0xe0` | `__wake_up_common+0x8c/0xe0` |
+| x4 | `dfff800080099ee4` | `dfff800080099ee4` |
+| 调用者 | `rk3x_i2c_irq+0x198/0x3a0` | `rk3x_i2c_irq+0x198/0x3a0` |
+| `Code:` | `????????` | `????????` |
+
+**⇒ DRAM 初始化被排除。** 现在两边 DRAM 序列一致（50MHz → 配置 → 升频 400/800 →
+训练），故障照旧。**差异在引导程序的别处。**
+
+⚠️ **补丁保留而不是回退** —— 理由和当初写它时不同。留着它，两边 DRAM 序列就一致，
+后续对比只剩一个变量；回退会把 400MHz 顺序那个差异重新放回来。
+⚠️ 这是偏离上游的改动，**下一个实验若不需要它就删掉**。
+
+### ⚠️ tty13 第一次启动：一个新形态
+
+```
+Unable to handle kernel read from unreadable memory at virtual address 0000000000000000
+Unable to handle kernel write to read-only memory at virtual address 0000000000000060
+  ESR = 0x0000000096000044      EC = 0x25: DABT (current EL)
+  FSC = 0x04: level 0 translation fault
+pc : el1h_64_irq+0x18/0x6c
+lr : cpuidle_enter_state+0xa4/0x320
+Call trace: el1h_64_irq ← cpuidle_enter ← do_idle ← cpu_startup_entry
+            ← __cpu_disable ← __secondary_switched
+Code: a90217e4 a9031fe6 a90427e8 a9052fea
+Kernel panic - not syncing: Attempted to kill the idle task!
+```
+
+**读 0x0、写 0x60** —— 空指针加偏移，idle 上下文里、由次核下线路径触发。
+寄存器里还有 `x17: 65663a6d726f6674`，小端读是 ASCII `"tform:fe"`，
+以及 `x5: 00ffffffffffffff`。**寄存器里出现文本**，与 tty8 的 `x16` 同类。
+
+⚠️ 时间点不同（1.37s / 0.46s）、调用路径不同，但**坏指针是同一个值**。
+
+---
+
+## 排除五：另外三条我怀疑过、然后自己查掉的机制
 
 写下来是因为它们看起来都很合理，而且我都差点就当成结论了：
 

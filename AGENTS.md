@@ -85,19 +85,33 @@ function pointer pointing at non-code. See
   One successful boot out of six proves nothing.
 - **The obvious hypothesis is already dead.** `rk3399-sdram-lpddr4-100.dtsi` is
   byte-identical between v2022.07 (Armbian) and v2025.10 (this port) — sha256
-  `2874c640…`. Same DRAM CONFIGs, same board dtsi, and the driver differs by 3%. The
-  "50MHz vs 400MHz" serial-output difference is an artefact of where `base.ddr_freq`
-  is assigned relative to the printf, not a difference in training frequency.
-- **The one real difference found**: v2025.10 moves the LPDDR4 switch to 400MHz to
-  *before* `set_memory_map` / `calculate_ddrconfig` / `set_ddrconfig` /
-  `dram_all_config`. v2022.07 configured all of that at the rate the board parameters
-  ask for (80MHz) and bumped the frequency only at the end. That is upstream mainline
-  code, so reverting it may break other boards.
-  **A patch doing exactly that exists and is built, unverified on hardware:**
-  `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch`, guarded by three
-  assertions in `build.sh` because the change is invisible in the artefacts.
+  `2874c640…`. Same DRAM CONFIGs, same board dtsi, and the driver differs by 3%.
+- **The "50MHz vs 400MHz" serial-output difference is real, not a printing artefact.**
+  `sdram_print_ddr_info()` runs inside the channel loop, and by then the early
+  `lpddr4_set_rate` has already moved the controller to 400MHz, so the printed number
+  tracks the state the configuration writes actually happen at. The board rate is
+  **50MHz** — index 34 of the flat u32 array, pinned by the struct total
+  `34+5+332+200+959 = 1530` matching the dtsi, plus `num_channels`, `stride` and `odt`
+  all agreeing with `sdram-rk3399-lpddr4-400.inc`. I once decoded this as 80 from a
+  buggy script and the wrong number reached the patch header and the docs; the serial
+  print of 50MHz is the evidence it was wrong.
+- **DRAM initialisation is now ruled out, by experiment.** `0103-…-lpddr4-configure-before-training.patch`
+  restores the v2022.07 order (50MHz, configure, then train and switch), the serial
+  log confirms it took effect, and the fault is unchanged — tty13's second boot is
+  identical to tty12's down to the ESR, the PC `0xdfff800080099ee4`, the link register
+  and `rk3x_i2c_irq+0x198/0x3a0`. Two boots, two panics. The patch is kept so both
+  bootloaders share one DRAM sequence and future comparisons have a single variable,
+  not because it fixes anything. It diverges from upstream: delete it when it stops
+  earning its place.
+- **What is left is elsewhere in the bootloader.** The board dtsi overrides this port
+  omits while both `rk3399-rock-pi-4-u-boot.dtsi` and Radxa's own
+  `rk3399-rock-4c-plus-u-boot.dtsi` carry them are the next thing: `&sdhci` timing,
+  `&vdd_log { regulator-init-microvolt = <950000>; }`, and a `leds` node. The vdd_log
+  one matters because the kernel's own node in `rk3399-rock-pi-4.dtsi` has only a
+  voltage range and no `regulator-init-microvolt`, so whatever U-Boot leaves is what
+  the kernel keeps. **Untested.**
 - **Do not assume mainline v2022.07 is what Armbian runs.** Its banner is
-  `2022.07_armbian-…`, it patches its own U-Boot, and its DRAM parameters differ from
+  `2022.07_armbian-…`, it patches its own U-Boot, and its parameters differ from
   ours — it prints a 50MHz init rate and no 50 exists anywhere in our parameter array.
   Those patches are not available, so mainline v2022.07 ordering is the closest we can
   get, not the same thing.
