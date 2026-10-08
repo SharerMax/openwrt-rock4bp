@@ -44,5 +44,55 @@ to speak of. Use something that counts occurrences.
 
 ## Current contents
 
-Empty, pending the rebuild that drops patch `0103` and its re-measurement.
-See `../docs/postmortem-dram-instability.md` for the measurements.
+The build measured on 2026-10-08, which **passed 21/21 post-build checks and six
+consecutive clean boots** with patch `0103` removed:
+
+```
+idbloader.img                        192512    TPL + SPL, for eMMC boot
+idbloader-spi.img                    385024    TPL + SPL, for SPI boot
+u-boot.itb                          1295360    U-Boot proper
+openwrt-radxa_rock-4b-plus-ext4.img 603979776 full disk image, for Maskrom
+SHA256SUMS.txt
+```
+
+Verify before using any of it:
+
+```sh
+sha256sum -c SHA256SUMS.txt
+```
+
+The uncompressed `.img` is the one to hand to Maskrom, because that is currently
+the **only** recovery path — SPI holds nothing bootable (see
+`../docs/boot-order.md`):
+
+```sh
+sudo rkdeveloptool db rk3399_loader_v1.27.126.bin
+sudo rkdeveloptool wl 0 openwrt-radxa_rock-4b-plus-ext4.img
+```
+
+That image embeds the same bootloader as `idbloader.img` at LBA 0x40; this was
+checked by comparing the rkimage at 0x8000 against the staging copy
+(`fe4165bea40d399d8b867d34…`), not assumed.
+
+### The squashfs image is deliberately absent
+
+Only the ext4 variant was measured. `deploy.sh` defaults to squashfs while this
+board has always run ext4, so carrying both here would invite flashing the wrong
+one. If you need squashfs, build it and measure it first.
+
+### ⚠️ If you rebuild this from the `.img.gz`, do not be alarmed by `gzip`
+
+The OpenWrt sysupgrade `.gz` has **274 bytes of JSON metadata appended after the
+gzip stream** (`{"metadata_version": "1.1", ...}`), so:
+
+```
+gzip -t <image>.img.gz      → exit 2, "trailing garbage ignored"
+gzip -dc <image>.img.gz     → exit 2, but the image is complete and correct
+```
+
+This is OpenWrt's own layout — the metadata is there so `sysupgrade` can read it
+without decompressing the whole image — **not corruption**. Verified here: the
+gzip stream ends at byte 12811498 of a 12811772-byte file, and the 274 trailing
+bytes are that JSON.
+
+`scripts/deploy.sh` has a check for exactly this. Do not "fix" the `.gz`.

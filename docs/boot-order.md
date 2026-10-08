@@ -321,7 +321,8 @@ strings -n 12 /dev/mtd0 | wc -l  ==> 0
 
 1. ⚠️ **这不是 OpenWrt 内核的问题。** 两套完全不同的内核（6.12 与 6.18）都读不对，
    指向 SPI 读路径本身 —— pinctrl、时钟、驱动模型的某处。
-2. ⚠️ **`recovery/spi-working-armbian.bin` 不能当参考物。** 扫遍整份 4 MiB，
+2. ⚠️ **`recovery/spi-working-armbian.bin` 不能当参考物**（⚠️ **该文件已于 10-09 删除** ——
+   一份已证明是垃圾的数据，留着比删掉更危险）。扫遍整份 4 MiB，
    **FDT magic（`d0 0d fe ed`）出现 0 次** —— 一份正常的 U-Boot 至少带 3 个 DTB。
    之前用它当"Armbian 引导程序的样子"是靠不住的。
 3. ⚠️ **仍然缺的那份 ground truth**：SPI 上真实的 `idbloader` + `u-boot.itb`。

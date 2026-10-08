@@ -667,7 +667,8 @@ tty15（无 0103）:  lpddr4_set_rate: change freq to 400MHz   ← 切频在前
 
 
 5. **拿到 Armbian 真正的 `u-boot.itb` / `idbloader.img`**。想做的语义级设备树比对
-   （而不是比参数）需要它们，而 `recovery/spi-working-armbian.bin` **不能用** ——
+   （而不是比参数）需要它们，而 `recovery/spi-working-armbian.bin` **不能用**
+（⚠️ **已于 10-09 删除**）——
    那份 dump 里 FDT magic 出现 **0 次**，根本不是真实的 U-Boot 数据（见
    [boot-order.md](boot-order.md)）。
 6. **⚠️ 已知做不到的一件事**：把行为改成和 Armbian 完全一致。

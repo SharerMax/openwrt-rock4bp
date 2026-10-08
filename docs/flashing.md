@@ -540,7 +540,16 @@ U-Boot 会先接管，拿不到 maskrom。
 ⚠️ **写 SPI 需要两个文件、两个偏移**：`idbloader-spi.img`（TPL+SPL）和 `u-boot.itb`
 （U-Boot 本体）。**只写前者只能到 SPL。**
 
-⚠️ **`recovery/` 里那份不是当前构建的字节。** 要写 SPI 应从当前构建目录取：
+✅ **`recovery/` 里现在就是当前构建的字节** —— 10-09 重新放入 10-08 那个 6 次连续
+零 panic 的构建。用之前先核对：
+
+```
+cd recovery && sha256sum -c SHA256SUMS.txt
+```
+
+⚠️ **但别默认它永远是最新的。** 这个目录**已经骗过一次人**：它长期放着 base 构建的
+产物，而那份已知 6 次启动 3 次 panic —— 在紧急时刻去拿，拿到的就是一个已知半坏的
+引导程序。所以规矩是：**每次用之前都核对哈希**，或者直接从当前构建目录取：
 
 ```
 build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10/

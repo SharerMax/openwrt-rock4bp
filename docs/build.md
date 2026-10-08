@@ -84,12 +84,16 @@ recovery/                                          只在构建机上，见下
 —— 它是构建产物和恢复材料的临时存放处。里面有：
 
 ```
-idbloader.img / idbloader-spi.img / u-boot.itb     引导程序
-                                                     ⚠️ 18:40 那版，非当前构建的字节
-openwrt-...-ext4-sysupgrade.img.gz                当前镜像的副本（与 bin/ 逐字节一致）
-spi-working-armbian.bin                            从板上读到的 SPI dump
-                                                     ⚠️ 这份不是芯片内容，见 boot-order.md
+idbloader.img / idbloader-spi.img / u-boot.itb     引导程序（**通过判据的那一版**）
+openwrt-radxa_rock-4b-plus-ext4.img                完整镜像，**Maskrom 用这个**
+SHA256SUMS.txt                                     ⚠️ 用之前先 sha256sum -c 核对
+README.md                                          规矩 + 已知坑
 ```
+
+⚠️ **这个目录长期放的不是当前构建 —— 而且是已知半坏的那一版。** 它曾经一直放着
+**base 构建**（6 次启动 3 次 panic），直到 10-09 才清空重填。
+**规矩现在是：只放测过的构建**（见 `recovery/README.md`），但**每次用之前仍然要核对哈希**
+—— 这个目录已经骗过一次人了。
 
 ### overlay 里的两类文件，不要混为一谈
 
@@ -363,6 +367,9 @@ gpio-keys   不存在 ✓（按设计删除）
 
 ⚠️ **实际后果**：`recovery/` 里的 U-Boot 产物不是当前构建的字节。将来若要用 Maskrom 把
 本移植的引导程序写进 SPI，应从当前构建目录取。
+
+> **已过时（10-09）**，而且当时的情况**比这句话更糟**：见上面 `recovery/` 那一节 ——
+> 里面放的一直是已知 50% panic 的 base 构建。该目录已清空重填。
 
 ---
 

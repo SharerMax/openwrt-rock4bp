@@ -272,8 +272,11 @@ Two specific footguns worth knowing before you touch hardware:
   rewritten four times; read it read-only before writing.
 - **Linux cannot read this SPI flash correctly, on any kernel.** Armbian 6.18.54 gives two
   different md5 sums for two consecutive reads of the same 64 KiB and zero strings ≥12
-  chars. So `recovery/spi-working-armbian.bin` is not real U-Boot data — it contains zero
-  FDT magics. Do not use it as a reference.
+  chars. So `recovery/spi-working-armbian.bin` was not real U-Boot data — it contained zero
+  FDT magics. **That file was deleted on 10-09**: a file named `spi-working-*.bin` invites
+  exactly the wrong use, and `recovery/README.md` records the two broken ways to test that
+  claim (`grep -c` counts lines, and binary data has no lines; re-reading a saved file twice
+  gives an identical md5, while the real "two reads differ" claim was about the chip).
 - **`deploy.sh` defaults to the squashfs image.** The board has been running ext4. Pass
   the variant explicitly or you will flash a different image than the one you tested.
 
