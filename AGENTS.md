@@ -74,6 +74,36 @@ reason — recorded as true when the finding was made, never revisited:
 Documentation here goes stale faster than anyone remembers. When you change behaviour on
 hardware, re-read the affected passages in the same pass.
 
+## ⚠️ SPI is writable from Maskrom; the documented reason it "was not" was wrong
+
+**`rkdeveloptool wl` does not choose the medium — the loader does.** `db` pushes a
+Rockchip loader that initialises the storage later commands address:
+
+```
+rk3399_loader_v1.27.126.bin        -> eMMC    (what this repo has always used)
+rk3399_loader_spinor_*.bin        -> SPI NOR (a different file entirely)
+```
+
+The docs said "`wl` only touches eMMC, so SPI is unreachable". The observation was
+right and the mechanism was wrong, and the error had no symptom: with the wrong
+loader `wl` **reports success while writing to the other medium**. A wrong
+mechanism gets a usable route recorded as closed. `scripts/flash-spi.sh` refuses a
+loader whose name lacks `spinor`.
+
+**The payload already existed and nobody noticed.** `CONFIG_ROCKCHIP_SPI_IMAGE=y` was
+already in the defconfig, so U-Boot has been emitting `u-boot-rockchip-spi.bin`
+(2212864 B) all along — it was just never staged, never asserted, never offered to
+`rkdeveloptool`. **An artefact existing is not the same as it being packaged,
+checked, or used.** The two container shapes are not interchangeable (rksd at
+`0x800000` for eMMC vs rkspi 2K/2K-spread at `0xE0000` for SPI), and mixing them
+stops after the SPL, which reads as a broken bootloader rather than a wrong file.
+`scripts/assert-spi-boot-image.py` proves the SPI image is this build's rkspi
+variant; it has negative controls and they have been run.
+
+⚠️ **`flash-spi.sh --write` has never run on hardware**, and the loader version is
+unsettled: Radxa ships `spinor v1.15.114` and documents that v1.72-and-later boards
+need `v1.20.126`, and this board's revision has not been identified.
+
 ## The port's U-Boot now clears the six-boot bar; the cause is still open
 
 **The `&vdd_log` build now clears the bar this repository set: six consecutive clean
@@ -252,6 +282,8 @@ Rules that are easy to get wrong:
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
 | `assert-sdram-params-in-image.py` | Assert the RK3399 DRAM parameters are in the image |
 | `deploy.sh` | Write the image to USB / SD / eMMC |
+| `flash-spi.sh` | Write the SPI bootloader from Maskrom. ⚠️ `--write` not yet on hardware |
+| `assert-spi-boot-image.py` | Assert the SPI boot image is this build's rkspi variant |
 | `wifi-test.sh` | AP6256 power-on testing, one cold boot per combination |
 | `write-idbloader-sd.ps1` | Windows: write `idbloader` to LBA 0x40 on a card |
 

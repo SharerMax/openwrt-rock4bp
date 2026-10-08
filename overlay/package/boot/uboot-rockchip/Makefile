@@ -475,6 +475,15 @@ UBOOT_MAKE_FLAGS += \
 define Build/InstallDev
 	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
 	$(CP) $(PKG_BUILD_DIR)/u-boot-rockchip.bin $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-u-boot-rockchip.bin
+	# The SPI NOR counterpart. Two shapes come out of one U-Boot build and they
+	# are not interchangeable:
+	#   u-boot-rockchip.bin      idbloader rksd  + U-Boot at 0x800000  -> eMMC/SD
+	#   u-boot-rockchip-spi.bin  idbloader rkspi + U-Boot at CONFIG_SYS_SPI_U_BOOT_OFFS
+	# Only the first was staged, so the file needed to put a bootloader on SPI
+	# existed in the build tree and nowhere else. It is still not embedded in the
+	# disk image -- SPI is 4 MB and that image is 576 MiB -- so it is installed
+	# for flashing with scripts/flash-spi.sh.
+	$(CP) $(PKG_BUILD_DIR)/u-boot-rockchip-spi.bin $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-u-boot-rockchip-spi.bin
 endef
 
 define Package/u-boot/install/default

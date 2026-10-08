@@ -537,8 +537,28 @@ U-Boot 会先接管，拿不到 maskrom。
 ✅ **这条路径已在真机上验证过**（2026-10-06）：SPI 上的 U-Boot 起不来时，用官方
 `rk3399_loader` 加 Armbian 的引导程序成功救回。这条路径可用，比整机报废值得好得多。
 
-⚠️ **写 SPI 需要两个文件、两个偏移**：`idbloader-spi.img`（TPL+SPL）和 `u-boot.itb`
-（U-Boot 本体）。**只写前者只能到 SPL。**
+⚠️ **⚠️ 但请读这一条再照做：`rk3399_loader` 是 eMMC loader，它不写 SPI。**
+它初始化的是 eMMC，之后 `wl` 只对 eMMC 生效 —— **用错 loader 时 `wl` 会报"成功"，
+只是写到另一块介质，没有任何警告。** SPI 要用 `rk3399_loader_spinor_*.bin`。
+上面那句"已在真机验证过"验证的是**进 Maskrom 这个流程**，不是"它能写 SPI"。
+机制与已就绪的 payload 见
+[boot-order.md 的 SPI 一节](boot-order.md#spi-现在可以写了-2026-10-09)。
+
+写 SPI 用专用脚本，不要手敲 `wl`：
+
+```bash
+scripts/flash-spi.sh --check                            # 只读，先跑这个
+scripts/flash-spi.sh --plan                             # 再看命令
+scripts/flash-spi.sh --write --loader <spinor-loader>   # 真写
+```
+
+⚠️ **`--write` 一次都没在硬件上跑过**，loader 版本也未定（见该节）。
+
+⚠️ **不要手拼 `idbloader-spi.img` + `u-boot.itb`。** SPI 要的是 `rkspi` 容器
+（每 4 KiB 页只用前 2 KiB、后面补零），U-Boot 本体在 `0xE0000` 而不是 `0x4000`；
+两者和偏移都由 U-Boot 构建合成了单个 `u-boot-rockchip-spi.bin`，
+`assert-spi-boot-image.py` 会验它确实是同一次构建的 rkspi 变体。
+⚠️ **混用两个容器会停在 SPL 之后** —— 那看起来像引导程序坏了，不像文件选错了。
 
 ✅ **`recovery/` 里现在就是当前构建的字节** —— 10-09 重新放入 10-08 那个 6 次连续
 零 panic 的构建。用之前先核对：

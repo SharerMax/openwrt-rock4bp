@@ -6,6 +6,12 @@
 2. **镜像自带引导程序**，所以 SPI 不是必需的 —— 但正因为它在最前面，它挡路。
 3. **Linux 读不到这块 SPI 的正确内容**，所以不能从运行中的系统备份或写入它。
 
+> ⚠️ **2026-10-09：第 4 条，关于 Maskrom 写 SPI 的机制。**
+>
+> 本文长期写着「Maskrom `wl` 只写 eMMC，不碰 SPI」。**观察是对的，机制是错的** ——
+> 而错的机制会让人以为这条路是封死的。新增的一节：
+> [SPI 现在可以写了](#spi-现在可以写了-2026-10-09)。
+
 排查过程（含几条走错的岔路）记在
 [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md)。本文只讲这三条结论和它们的后果。
 
@@ -99,8 +105,12 @@ Returning to boot ROM...
 后面紧跟 `Returning to boot ROM...`，意思是这一级放弃、交回 ROM 走下一条链路 —— eMMC。
 
 ⚠️ **而启动顺序是 SPI 优先**（见本文开头，`rkdeveloptool` 实测过）。既然 SPI 排第一，
-ROM 却直接落到 eMMC，**说明 SPI 上没有可引导镜像**。这与 Maskrom `wl` 只写 eMMC
-不矛盾：`wl` 确实没动 SPI，是 SPI 那边本来就没有（或早已失效）。
+ROM 却直接落到 eMMC，**说明 SPI 上没有可引导镜像** —— SPI 那边本来就没有（或早已失效）。
+
+⚠️ **机制补充（10-09）**：我这一节原先把原因写成「Maskrom `wl` 只写 eMMC，不碰 SPI」。
+**那句的观察是对的，机制是错的**：`wl` 并不选择介质，**是 loader 选择的** ——
+换成 `rk3399_loader_spinor_*` 就写 SPI。详见下面「SPI 现在可以写了」一节。
+**SPI 上现在是空的**这个结论不受影响。
 
 ⚠️ **后果：当前唯一的恢复路径是 Maskrom。** 没有 TTL 适配器时，SPI 上有没有东西都不影响
 TPL/SPL 的可见性，所以之前没人留意它能否引导 —— 但它一旦被写成"备用恢复路径"，
@@ -408,12 +418,99 @@ U-Boot 读得对（能起、能读 env），Linux 读不对 —— 而**硬件�
 
 ---
 
+## SPI 现在可以写了（2026-10-09）
+
+### ❌ 旧结论：Maskrom 写不了 SPI —— 观察对，机制错
+
+本文前面（以及 `recovery-README.md`）一直写着「Maskrom `wl` 只写 eMMC，**不碰 SPI**」，
+并据此推出「要改 SPI 上的引导程序，只有 Maskrom 这一条路」——同时又说这条路走不通。
+**这两句不能同时成立，而它们并存了很久。**
+
+准确的说法是：
+
+> **`rkdeveloptool wl` 不选择介质。loader 选择。**
+
+`rkdeveloptool db <loader>` 把一个 Rockchip loader 推给 SoC，**由 loader 决定后续命令
+面对哪块存储**。所以同一个 `wl 0 <image>`：
+
+| loader | `wl` 写到 |
+|---|---|
+| `rk3399_loader_v1.27.126.bin` | **eMMC** ← 本仓库一直用的是这个 |
+| `rk3399_loader_spinor_*.bin` | **SPI NOR** |
+
+⚠️ **这里有个不设防就一定会踩的坑：用错 loader 时 `wl` 会报"成功"。**
+它确实成功写完了 —— 只是写到了另一块介质。没有任何错误、没有任何警告。
+所以脚本 [`scripts/flash-spi.sh`](../scripts/flash-spi.sh) 会对 loader 名字做检查，
+名字里没有 `spinor` 就拒绝执行。
+
+### 为什么之前没试出来
+
+因为**镜像本身是对的，缺的是 loader 和 payload**。本移植的 U-Boot defconfig 里
+`CONFIG_ROCKCHIP_SPI_IMAGE=y`，U-Boot 构建**一直**在产出 `u-boot-rockchip-spi.bin`
+（2212864 字节）—— 文件就在构建目录里，只是：
+
+1. 从没被打包给 `rkdeveloptool`（`Build/InstallDev` 只装 `u-boot-rockchip.bin`）；
+2. 从没被任何校验项看过；
+3. 没人知道它和 eMMC 那个**不是同一个东西**。
+
+### 两种容器不能互换
+
+同一次 U-Boot 构建产出两个形状，**混用会停在 SPL 之后**（看起来像引导程序坏了，
+而不是像文件选错了）：
+
+| | `u-boot-rockchip.bin`（eMMC/SD） | `u-boot-rockchip-spi.bin`（SPI NOR） |
+|---|---|---|
+| 一级容器 | `rksd`，TPL+SPL 连续排列 | `rkspi`，**每 4 KiB 页只用前 2 KiB**，后 2 KiB 补零 |
+| 大小 | `idbloader` 192512 B | `idbloader` 385024 B（正好 2 倍） |
+| U-Boot 本体位置 | 字节 `0x800000`（LBA `0x4000`） | `CONFIG_SYS_SPI_U_BOOT_OFFS` = `0xE0000` |
+
+`rkspi` 的 2 KiB/2 KiB 间隔是 **boot ROM 要求的**；U-Boot 源码
+（`tools/rkspi.c`）自己都写着 *"Its rationale is unknown"*，但照样这么生成。
+
+**已实测**（构建产物比对，不是推理）：
+
+```
+u-boot-rockchip-spi.bin 的前 0x5e000 字节，拆掉 2K/2K 间隔后
+  == idbloader.img          逐字节相同          ← 证明是同一次构建的 rkspi 变体
+0xe0000 处是 FIT 头 d00dfeed                    ← 与 CONFIG_SYS_SPI_U_BOOT_OFFS 一致
+整个 2212864 字节的镜像里含 rockchip,sdram-params  ← 带着这次 DRAM 修复
+```
+
+> 这正是 [`scripts/assert-spi-boot-image.py`](../scripts/assert-spi-boot-image.py)
+> 断言的东西。**它有负控制**：喂 eMMC 那个容器进去必须失败，
+> 喂一个错的 `--u-boot-offset` 也必须失败。两者都实测过会失败。
+
+### ⚠️ 没有在硬件上做过
+
+**上面全部来自构建产物、defconfig、U-Boot 源码和 binman 的 map 文件。
+本移植一次 SPI 写入都没执行过。**
+
+- 未验证：`--write` 路径本身、loader 版本、SPL 实际从 `0xE0000` 取到 U-Boot。
+- ⚠️ **loader 版本没定。** Radxa 为 ROCK Pi 4 发的是 `v1.15.114`，并说明 **v1.72
+  之后的板（他们点名 ROCK 4C+）需要 `v1.20.126`**。本板是**早期 V1.73 带 4 MB NOR**，
+  属于哪一类**没有按版本号确认过**。脚本不猜，`--loader` 是必填参数。
+- 失败不致命：SPI 现在**本来就没有可引导的东西**（见上面那节），
+  Maskrom 始终可用，eMMC 上的整包也是独立写的。
+
+### 怎么用
+
+```bash
+scripts/flash-spi.sh --check                    # 只读：验镜像，不碰设备
+scripts/flash-spi.sh --plan                     # 再打印将要执行的命令
+scripts/flash-spi.sh --write --loader <spinor-loader>   # 真写，要手输 YES
+```
+
+进 Maskrom 仍然要先短接 SPI CLK（40-pin 23/25），理由不变：SPI 排第一。
+
+---
+
 ## 当前状态
 
 | | 状态 |
 |---|---|
 | Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader`） |
-| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`），且**不碰 SPI** |
+| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`）。⚠️ **不碰 SPI 是因为用的是 eMMC loader**，不是工具的限制 —— 见[上面那节](#spi-现在可以写了-2026-10-09) |
+| ⚠️ **Maskrom 写 SPI** | ⚠️ **未上机**。payload 已就绪并通过断言（`u-boot-rockchip-spi.bin`），loader 必须换 spinor 的 |
 | ⚠️ SPI 上是否还有可引导镜像 | ❌ **没有** —— `Trying to boot from BOOTROM` 说明 ROM 在 SPI 上没找到东西 |
 | ⚠️ **当前唯一恢复路径** | **只有 Maskrom**。SPI 不构成兜底 |
 | 本移植的 U-Boot 是否跑过 | ✅ 跑过，而且现在 **6 次连续启动零 panic** |

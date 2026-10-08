@@ -74,6 +74,28 @@ That image embeds the same bootloader as `idbloader.img` at LBA 0x40; this was
 checked by comparing the rkimage at 0x8000 against the staging copy
 (`fe4165bea40d399d8b867d34…`), not assumed.
 
+### ⚠️ `rk3399_loader_v1.27.126.bin` is the eMMC loader — it will never write SPI
+
+The `db` command pushes a Rockchip loader onto the SoC, and **the loader decides
+which storage the later commands address**. The two commands above are correct
+and verified for eMMC, and they say nothing about SPI:
+
+```
+rk3399_loader_v1.27.126.bin        -> eMMC     (the one used here)
+rk3399_loader_spinor_*.bin        -> SPI NOR   (a different file entirely)
+```
+
+⚠️ **With the wrong loader `wl` reports success while writing to the other
+medium.** Nothing errors, nothing warns. That is why "Maskrom `wl` does not touch
+SPI" was believed here for a while — the observation was right and the mechanism
+was wrong.
+
+For SPI use `../scripts/flash-spi.sh`, which refuses a loader whose name does not
+contain `spinor`. ⚠️ **`--write` has not been run on hardware by this port**, and
+the loader version is unsettled (Radxa ships `spinor v1.15.114` and documents
+that v1.72-and-later boards need `v1.20.126`; this board's revision has not been
+identified). See [docs/boot-order.md](../docs/boot-order.md).
+
 ### The squashfs image is deliberately absent
 
 Only the ext4 variant was measured. `deploy.sh` defaults to squashfs while this

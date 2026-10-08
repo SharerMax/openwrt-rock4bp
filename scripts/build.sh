@@ -230,6 +230,32 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
 
   check "the image embeds that bootloader at LBA 0x40" \
     "python3 '$SCRIPT_DIR/assert-sdram-params-in-image.py' '$IMG' '$UB/u-boot.dtb' --dtc '$UBDTC' --offset 0x8000"
+
+  # The SPI boot image, which the eMMC checks above cannot see at all.
+  #
+  # Same U-Boot build, two container shapes, and only one of them was being
+  # checked: u-boot-rockchip.bin (idbloader rksd + U-Boot at 0x800000) for eMMC,
+  # u-boot-rockchip-spi.bin (idbloader rkspi, 2K/2K-spread, U-Boot at
+  # CONFIG_SYS_SPI_U_BOOT_OFFS) for SPI NOR. They are not interchangeable -- giving
+  # the wrong one to the right medium reaches the SPL and then stops, which reads
+  # as a broken bootloader rather than a wrong file.
+  #
+  # The offset is read out of the build's .config, not repeated here. A constant
+  # in this script would drift the first time someone changed it and go on passing
+  # an image the SPL cannot use.
+  SPI_OFFS=$(sed -n 's/^CONFIG_SYS_SPI_U_BOOT_OFFS=0x\([0-9A-Fa-f]*\)$/0x\1/p' "$UB/.config" | tail -1)
+
+  check "SPI boot image built (CONFIG_ROCKCHIP_SPI_IMAGE)" \
+    "[ -n '$SPI_OFFS' ] && [ -s '$UB/u-boot-rockchip-spi.bin' ]"
+
+  check "SPI boot image is the rkspi variant of this build" \
+    "python3 '$SCRIPT_DIR/assert-spi-boot-image.py' '$UB/u-boot-rockchip-spi.bin' '$UB/idbloader.img' --u-boot-offset $SPI_OFFS"
+
+  # Same needle as the eMMC container. Different container, so it needs its own
+  # proof -- the DRAM fix must be in the SPI image too, or a board booting from
+  # SPI is the one board that cannot start at all.
+  check "SPI boot image contains the RK3399 DRAM parameters" \
+    "python3 '$SCRIPT_DIR/assert-sdram-params-in-image.py' '$UB/u-boot-rockchip-spi.bin' '$UB/u-boot.dtb' --dtc '$UBDTC'"
 } >> "$LOG" 2>&1
 
 # Make the log's own freshness visible. A reader who finds an old log must not be

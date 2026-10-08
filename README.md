@@ -124,7 +124,7 @@
 > | `idbloader-spi.img` | `d3244a0239605349…` |
 > | `u-boot.itb` | `d466c390c57eaa5d…` |
 > | ext4 镜像 gz | `bd3a6112cb6abca7…`，12811784 字节 |
-> | 构建后校验 | **21 项全过** |
+> | 构建后校验 | **24 项全过** |
 > | 上机结果 | ✅ **6 次连续启动 0 panic**，6 次 `MemTotal` 一致、`boot_id` 互不相同 |
 >
 > ### ⭐ 但真正有意思的不是这次成功，是**SDIO 相位值变了**
@@ -216,7 +216,7 @@
 |---|---|
 | [docs/hardware.md](docs/hardware.md) | 硬件事实、板型辨识、40-pin、版本差异、按键、介质 |
 | [docs/device-tree.md](docs/device-tree.md) | 设备树策略、继承 dtsi ≠ 继承 board、U-Boot 板级 dtsi、dtc 坑 |
-| [docs/build.md](docs/build.md) | 构建环境、目录结构、21 项校验、包集合、产物、可复现性 |
+| [docs/build.md](docs/build.md) | 构建环境、目录结构、24 项校验、包集合、产物、可复现性 |
 | [docs/flashing.md](docs/flashing.md) | 烧卡、首次启动该看什么、eMMC 安装、Maskrom |
 | [docs/boot-order.md](docs/boot-order.md) | SPI → eMMC → SD、镜像自带引导程序、SPI 读不对 |
 | **故障记录** | |
@@ -256,6 +256,7 @@
 | CPU | ✅ | `SMP: Total of 6 processors activated` |
 | **Maskrom 恢复** | ✅ | 官方 `rk3399_loader` + Armbian 引导程序救回过一次起不来的板子 |
 | **Maskrom 写 eMMC** | ✅ | `rkdeveloptool db loader` + `wl 0 <整包>` 写入成功，板子从 eMMC 引导 |
+| **Maskrom 写 SPI** | ⚠️ **未上机** | payload 已就绪并断言通过（`u-boot-rockchip-spi.bin`），但要换 **spinor** loader 且版本未定。⚠️ 此前文档说「Maskrom 写不了 SPI」——**观察对、机制错**，`wl` 不选介质，loader 选。见 [docs/boot-order.md](docs/boot-order.md) |
 | **DRAM 参数（`rockchip,sdram-params`）** | ✅ **已修且生效** | TPL 打出 `lpddr4_set_rate` + 两通道各 `Size=2048MB`（2026-10-06）。⚠️ 但**同一份 TPL 会导致随机 panic**，见顶部状态节 |
 
 ### 主动划出范围

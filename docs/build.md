@@ -1,6 +1,6 @@
 # 构建
 
-构建环境、目录结构、构建流程、包集合、21 项校验、产物与可复现性。
+构建环境、目录结构、构建流程、包集合、24 项校验、产物与可复现性。
 
 ---
 
@@ -64,7 +64,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         manifest + 构建后 21 项校验
+  build.sh                                         manifest + 构建后 24 项校验
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
   check-patch-sources.sh                           三个补丁源与生成的补丁逐一比对
@@ -117,7 +117,7 @@ README.md                                          规矩 + 已知坑
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 21 项校验     ← 不是装饰
+4. 构建后 24 项校验     ← 不是装饰
 ```
 
 日志写到 `/tmp/build-full.log`，结尾打印校验块、`REAL_EXIT_CODE` 和日志年龄。
@@ -143,7 +143,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 
 ---
 
-## 21 项构建后校验
+## 24 项构建后校验
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -171,6 +171,9 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  image is newer than the staged bootloader it embeds
   OK/FAILED  staged bootloader contains the RK3399 DRAM parameters
   OK/FAILED  the image embeds that bootloader at LBA 0x40
+OK/FAILED  SPI boot image built (CONFIG_ROCKCHIP_SPI_IMAGE)
+OK/FAILED  SPI boot image is the rkspi variant of this build
+OK/FAILED  SPI boot image contains the RK3399 DRAM parameters
 ```
 
 （其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印的行数比语句数多 ——
@@ -194,6 +197,36 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 而它偏离上游这件事本身是负债 —— 改的是共享 DRAM 驱动，且挡住了
 「vdd_log 单独是否就够」这个问题。**测量过程留在
 [postmortem-dram-instability.md](postmortem-dram-instability.md)，负结果比补丁活得久。**
+
+### ⚠️ 三条新断言盯 SPI 镜像，而 eMMC 那批完全看不见它
+
+**一次 U-Boot 构建产出两种容器形状，而只有一种被检查过：**
+
+| 文件 | 容器 | U-Boot proper 在 | 用于 |
+|---|---|---|---|
+| `u-boot-rockchip.bin` | rksd（连续） | 介质 `0x800000`（文件内 `0x7f8000`，写到 LBA 0x40 之后） | eMMC / SD |
+| `u-boot-rockchip-spi.bin` | rkspi（每 4 KiB 页 2 KiB 数据 + 2 KiB 填充） | `CONFIG_SYS_SPI_U_BOOT_OFFS` = `0xE0000` | SPI NOR |
+
+⚠️ **两者不可互换，而且失败形态很像"引导程序坏了"而不是"文件拿错了"**：把 rksd 容器
+写到 SPI，ROM 会正常加载 TPL，然后 SPL 在它被告知的偏移上找不到 U-Boot 就停住。
+
+⚠️ **关键教训：产物存在 ≠ 被打包、被检查、被使用。**
+`CONFIG_ROCKCHIP_SPI_IMAGE=y` 早就在板级 defconfig 里，`u-boot-rockchip-spi.bin`
+**一直在构建树里生成**（2212864 字节）—— 但它**从来没有被 stage、没有被断言、
+也没有提供给 `rkdeveloptool`**。四条检查全过而这个文件从未被看一眼，正是这种情况。
+
+所以新增：
+
+1. `SPI boot image built` —— 顺便从 `.config` 读出 `CONFIG_SYS_SPI_U_BOOT_OFFS`。
+   **不在脚本里写死这个常量**：改了它而检查照旧通过，就会放行一个 SPL 用不了的镜像。
+2. `SPI boot image is the rkspi variant of this build` ——
+   `assert-spi-boot-image.py` **把 2K/2K 去展开后与 `idbloader.img` 逐字节比对**。
+   这一条同时证明「是 SPI 变体」**和**「不是上次构建的旧产物」，所以它才是承重的那条。
+3. `SPI boot image contains the RK3399 DRAM parameters` —— 同一个 TPL/SPL 的另一个容器，
+   **得单独证明**；否则一块从 SPI 引导的板子是唯一根本起不来的那种。
+
+⚠️ 这三条断言脚本都做过负控制：喂 eMMC 容器（会在 2048 处分叉，因为那里 rksd 有
+`RK33` tag 而 rkspi 是 0）、喂错偏移、喂错 idbloader —— 三种都正确失败。
 
 ⚠️ **留了一条通用断言**：`u-boot tree has no rejected hunks`。它原本混在 0103 那组里，
 但**不是 0103 专属** —— 它是唯一能发现「补丁上下文漂移、半打半上」的东西，
