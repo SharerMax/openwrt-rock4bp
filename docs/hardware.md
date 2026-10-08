@@ -179,7 +179,8 @@ mmcblk0   28.9G
 
 **引导路径：SPI 里的 Armbian U-Boot → eMMC**（`ubootpart` 指向 eMMC 分区）。
 dmesg 只有 3 条已知无害报错（PCIe `-110`、uart DMA、sound deferred probe），
-无内存错误。板子可达 `192.168.3.184`，`root` / `armbian`。
+无内存错误。板子可达 `192.168.3.8`，`root`，无密码（eMMC 上是本移植的 OpenWrt，
+不是 Armbian）。
 
 这是补上「Armbian TPL + eMMC 引导」那格对照的第一份数据 —— **只 1 次**，
 而判据是 6 次。

@@ -74,25 +74,37 @@ reason — recorded as true when the finding was made, never revisited:
 Documentation here goes stale faster than anyone remembers. When you change behaviour on
 hardware, re-read the affected passages in the same pass.
 
-## The port's own U-Boot is not trustworthy yet
+## The port's U-Boot now clears the six-boot bar; the cause is still open
 
-**This is the highest-priority open problem, and the cause is NOT located.** It boots, and
-`rockchip,sdram-params` works — but it panics 3 times out of 6 boots, always with a
-function pointer pointing at non-code. See
-[docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md).
+**The `&vdd_log` build now clears the bar this repository set: six consecutive clean
+boots.** Measured 2026-10-08 with `scripts/check-reboot-matrix.sh` — six boots, six
+distinct `boot_id`s, identical `MemTotal`, zero panic/oops/BUG lines in dmesg. The
+baseline it replaces was 3 panics in 6 boots (50%); Armbian's bootloader was 7 boots,
+zero panics. The only change was `&vdd_log { regulator-init-microvolt = <950000>; }`.
 
-**The `&vdd_log` build is on the board and one boot succeeded. That is one boot, not
-six.** Never let this be reported as fixed. The judgement is six consecutive clean
-boots: tty14 succeeded once and, as a separate signal, the SDIO phase tuning value
-moved from 269 to 221, which lands inside Armbian's 220-223 range. Three of the six
-earlier boots of this port recorded a phase and all three read 269; the other three
-died before the SDIO controller was probed, so they recorded nothing. Treat that as
-encouraging and as a *flash fingerprint* (only the new bootloader produces 221),
-not as a located root cause.
-Five more boots are needed.
+**The cause is still NOT located, and that is the remaining problem.** Six clean boots
+is a threshold, not a diagnosis. Specifically:
 
-- **Do not ship this port's bootloader** until it survives at least 6 consecutive boots.
-  One successful boot out of six proves nothing.
+- **The causal chain was never closed.** The hypothesis is that the rail voltage
+  U-Boot left behind degraded the SDIO timing margin (phase 269 versus the low 220s)
+  and that this relates to the panic. Nothing links rail voltage to the crash site at
+  `rk3x_i2c_irq`. It is **compatible, not established.**
+- **Six clean boots does not mean a zero failure rate.** The fault was intermittent.
+  Six boots say "did not occur in six", not "cannot occur".
+- **Do not propose an upstream PR yet.** Without a located cause nobody else can
+  reproduce it, so nobody can tell whether the voltage line is actually necessary.
+
+**Do not report this as "root cause found".** Report it as "threshold met, cause open".
+
+⚠️ **The SDIO phase value is a rail indicator, not a build fingerprint.** It is the only
+observable in the logs that moved — 269 on every pre-vdd_log boot that probed SDIO, and
+221/224/225/223 on the vdd_log boots. I called it a "flash fingerprint" and was wrong:
+it varies per boot, so **assert the band, never the exact number.** My first band was
+220-224 and it failed a real reading of 225 — widen it from observed readings only.
+
+- **The six-boot bar was met on 2026-10-08, so the image is deliverable.** What is
+  still open is the cause, not the stability. Keep those two separate in every status
+  report: *threshold met* is not *root cause found*.
 - **The obvious hypothesis is already dead.** `rk3399-sdram-lpddr4-100.dtsi` is
   byte-identical between v2022.07 (Armbian) and v2025.10 (this port) — sha256
   `2874c640…`. Same DRAM CONFIGs, same board dtsi, and the driver differs by 3%.
@@ -124,14 +136,16 @@ Five more boots are needed.
   attributable. Build with `scripts/build.sh`, flash with maskrom, and the verdict is
   six clean boots — not one. **tty14 is one success; run five more before claiming
   anything is fixed.**
-- **An SDIO phase value is a flash fingerprint.** Nothing in the serial log says which
-  bootloader ran: TPL prints a version string, not the properties we changed, and a
-  rail voltage is never printed. `dwmmc_rockchip`'s tuned phase does distinguish them —
-  this port read 269 on every boot that got as far as probing it before vdd_log, and
-  221 after; Armbian reads 220-223. Check it first after any flash. **A missing value
-  means the boot died before tuning, not that the value was zero** — and it cuts both
-  ways: two panics happened *after* tuning, at 0.64s and 1.39s, so "it always crashes
-  around half a second" is wrong.
+- **The SDIO phase value is a rail indicator, not a build fingerprint.** Nothing in the
+  serial log says which bootloader ran: TPL prints a version string, not the properties
+  we changed, and a rail voltage is never printed. `dwmmc_rockchip`'s tuned phase is the
+  only observable that moved — 269 on every pre-vdd_log boot that got as far as probing
+  it, 220-224 on every vdd_log boot, and Armbian sits at 220-223 too.
+  ⚠️ **Do not assert an exact value.** I wrote "only the new bootloader produces 221"
+  and the next boot of the same image read 224. It varies per boot; assert the band.
+  ⚠️ **A missing value means the boot died before tuning, not that the value was zero** —
+  and it cuts both ways: two panics happened *after* tuning, at 0.64s and 1.39s, so
+  "it always crashes around half a second" is wrong.
 - **Count boots by splitting on the TPL banner, never by counting panic lines.** tty8
   and tty13 each contain two boots, so a naive count of `Kernel panic` occurrences
   inflates the sample. Every boot count in this repo was re-derived this way.
@@ -165,11 +179,26 @@ Five more boots are needed.
   askpass/password exchange can block indefinitely. A reboot loop sat on one call for four
   minutes while the board had already rebooted and was answering normally. Wrap every ssh
   in `timeout` and judge reachability by the wrapper's exit status.
-- **The board answers at `192.168.3.184`** as `root` / `armbian`. Read-only inspection is
-  fine and has been useful — the SPI retest and the eMMC matrix both came from it.
-- **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`), which leaves the working SPI
-  bootloader alone. Prefer it over writing SPI.
-- **Do not propose an upstream PR** until this is fixed.
+- **The board answers at `192.168.3.8`** as `root` with **no password**. Read-only
+  inspection is fine and has been useful — the SPI retest, the eMMC matrix and the
+  reboot matrix all came from it. It now runs this port's own OpenWrt image, not
+  Armbian, and its host key changed when that image was written
+  (`SHA256:qgJ+OCni…`, old Armbian-era key `SHA256:bkOdpYyr…` retired). **Check which
+  key you have before assuming a host is the board.**
+- **No serial console means the reboot loop is the only way to reach the six-boot
+  threshold here.** With the board on the network, reboot over ssh and poll `boot_id`
+  gives the same evidence the serial capture gave for Armbian: each boot must show a
+  new `boot_id`, a clean dmesg, and a phase in the rail band. **A boot that never comes
+  back is a result, not a retry** — the panic lands at 0.5-1.4s, before networking.
+- **`nohup reboot &` over ssh does not reboot the board.** The process dies with the
+  pty when ssh exits, the board never goes down, and the result looks exactly like a
+  successful no-op: `reboot` exits 0, the board keeps answering, `boot_id` is
+  unchanged. **This wasted two rounds of a five-round matrix before the `boot_id`
+  assertion caught it** — which is the argument for that assertion. Use
+  `setsid reboot </dev/null &`, and keep checking `boot_id` rather than trusting
+  the trigger's exit status.
+- **Maskrom can write eMMC** (`rkdeveloptool wl 0 <image>`). Prefer it over writing SPI —
+  ⚠️ though note SPI currently holds nothing bootable, so it is not itself a fallback.
 ## Board facts worth knowing before you touch the device tree
 
 - Boot order is **SPI → eMMC → SD**. A working SPI bootloader always wins, so a masking
@@ -220,6 +249,7 @@ Rules that are easy to get wrong:
 | `sync-overlay.sh` | Compare `overlay/` against the tree; copy either way, direction must be explicit |
 | `check-patch-sources.sh` | Check each patch source against the patch it generates |
 | `check-doc-links.py` | Check every relative markdown link resolves, including `#anchor` headings |
+| `check-reboot-matrix.sh` | Reboot the board N times and judge each boot; needs no serial console |
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
 | `assert-sdram-params-in-image.py` | Assert the RK3399 DRAM parameters are in the image |
 | `deploy.sh` | Write the image to USB / SD / eMMC |
@@ -232,10 +262,15 @@ preview path is what caught two bugs in the destructive one.
 
 Two specific footguns worth knowing before you touch hardware:
 
-- **eMMC currently holds Armbian again** (reinstalled 2026-10-08: one 28.6 GB ext4,
-  `root=UUID=7043da66-…`), reachable at `192.168.3.184` as `root`/`armbian`. An OpenWrt
-  image was written there on 10-06 and an earlier Armbian was destroyed by a `dd` with no
-  backup. This line has been rewritten three times; read it read-only before writing.
+- **⚠️ eMMC now holds this port's OpenWrt image** (written 2026-10-08 for the `vdd_log`
+  test, boot `tty14`, phase 221). An OpenWrt image was written there on 10-06 and an
+  earlier Armbian was destroyed by a `dd` with no backup. **⚠️ SPI no longer holds a
+  bootable image.** tty14's log prints `Trying to boot from BOOTROM` /
+  `Returning to boot ROM...`, which is what the ROM says when it found nothing on SPI
+  and fell through to eMMC — even though boot order is SPI first. Maskrom `wl` did not
+  write SPI, but SPI is not providing a recovery path either, and I had asserted that it
+  was without checking. **The recovery path right now is Maskrom.** This line has been
+  rewritten four times; read it read-only before writing.
 - **Linux cannot read this SPI flash correctly, on any kernel.** Armbian 6.18.54 gives two
   different md5 sums for two consecutive reads of the same 64 KiB and zero strings ≥12
   chars. So `recovery/spi-working-armbian.bin` is not real U-Boot data — it contains zero
