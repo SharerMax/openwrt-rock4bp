@@ -391,8 +391,11 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
       定位到 `vdd_log` 修复前被 `pwm_regulator_init_boot_on()` 停在 **0% 占空比**
       （= 该轨下限）。⚠️ **仍缺一环**：内核 `supply_map` 里没有节点消费这条轨，
       设备树没描述板子的真实连线
-- [ ] Phase 5r：**测 `init = <800000>`（占空比 0%）** —— 一个构建就能分开
-      「轨必须真的被驱动」与「950mV 这个值本身」。⚠️ 每次仍需 6 次启动判定
+- [ ] Phase 5r：**测 `init = <800000>`（占空比 0%）** —— 🧪 **已构建，等上机**。
+      一个构建就能分开「轨必须真的被驱动」与「950mV 这个值本身」。
+      **预测会崩**（0% 就是 `boot_on` 已经停住的状态）。
+      `idbloader` 与 950mV 版逐字节相同、只有 `u-boot.itb` 变了 —— 印证这条轨
+      由 U-Boot proper 设置。24 项校验全过。⚠️ 每次仍需 6 次启动判定
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）

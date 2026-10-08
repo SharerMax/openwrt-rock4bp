@@ -175,11 +175,24 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   # The vdd_log rail. The kernel's own node for it has only a voltage range and
   # no regulator-init-microvolt, so this is the only thing that sets it, and it
   # is untested against the panic -- which is exactly why it needs an assertion
-  # rather than a comment. 950000 microvolts, asserted literally, because a node
-  # that silently reverted to a range-only definition would satisfy a weaker
-  # "there is a vdd_log" check.
-  check "u-boot dtb sets vdd_log to 950mV" \
-    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | tr -d ' \t' | grep -q 'regulator-init-microvolt=<0xe7ef0>'"
+  # rather than a comment. Asserted literally, because a node that silently
+  # reverted to a range-only definition would satisfy a weaker "there is a
+  # vdd_log" check.
+  #
+  # 2026-10-09: temporarily 800000 rather than 950000 (0xE7EF0). The root-cause
+  # analysis predicts 800000 -- duty 0%, the same state
+  # pwm_regulator_init_boot_on() parks the rail in -- will still panic, and that
+  # distinguishes "the rail must actually be driven" from "any explicit write is
+  # enough". This assertion is what makes the change visible in the built dtb
+  # instead of only in the source, so it has to be updated alongside it.
+  #
+  # ⚠️ 800000 is 0xC3500, NOT 0xC350. I wrote the shorter constant first and the
+  # check failed on a correct build -- the same arithmetic slip this check has
+  # already made once before, when 950000 came out as 0xE8A40 instead of 0xE7EF0.
+  # **A wrong assertion and a broken artefact look identical from the output**,
+  # so the first thing to do on a failure here is read the built dtb.
+  check "u-boot dtb sets vdd_log to 800mV (experiment; 950mV is 0xe7ef0)" \
+    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | tr -d ' \t' | grep -q 'regulator-init-microvolt=<0xc3500>'"
 
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"

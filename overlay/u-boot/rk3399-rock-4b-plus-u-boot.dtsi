@@ -86,6 +86,7 @@
  * ask for should change.
  *
  * ADDED 2026-10-08: &vdd_log { regulator-init-microvolt = <950000> }
+ *
  *   Once the board booted, this stopped being "not what is missing here".  That
  *   file is a long-standing omission on my part rather than a considered
  *   decision, and both files it would have pulled this from set the rail:
@@ -128,5 +129,26 @@
 #include "rk3399-sdram-lpddr4-100.dtsi"
 
 &vdd_log {
-	regulator-init-microvolt = <950000>;
+	/*
+	 * EXPERIMENT 2026-10-09: 800000, the bottom of the rail's range.
+	 *
+	 * This is the discriminating test for the root-cause analysis, and it is
+	 * predicted to FAIL. In continuous mode the driver maps the range linearly:
+	 *
+	 *     800000 -> duty  0%     875000 -> 12%   950000 -> 25%   1400000 -> 100%
+	 *
+	 * And pwm_regulator_init_boot_on() already parks this rail at duty 0 for the
+	 * whole kernel session, because the node has regulator-boot-on and no
+	 * enable-gpios. So 800000 reproduces the broken state exactly.
+	 *
+	 *   still panics  -> the rail must actually be driven; 950 mV merely happens
+	 *                    to be a non-zero duty. Root cause is then one step away:
+	 *                    find what the rail physically feeds.
+	 *   does not panic -> "any explicit write is enough", so the mechanism is in
+	 *                    the PWM channel or the pin, not the rail voltage.
+	 *
+	 * 950000 is the value that passed six consecutive boots. Revert to it if this
+	 * one behaves worse than that.
+	 */
+	regulator-init-microvolt = <800000>;
 };
