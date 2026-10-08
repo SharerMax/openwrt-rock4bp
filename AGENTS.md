@@ -81,6 +81,14 @@ hardware, re-read the affected passages in the same pass.
 function pointer pointing at non-code. See
 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md).
 
+**The `&vdd_log` build is on the board and one boot succeeded. That is one boot, not
+six.** Never let this be reported as fixed. The judgement is six consecutive clean
+boots: tty14 succeeded once and, as a separate signal, the SDIO phase tuning value
+moved from 269 — constant across all five earlier boots of this port — to 221, which
+lands inside Armbian's 220-223 range. Treat that as encouraging and as a *flash
+fingerprint* (only the new bootloader produces 221), not as a located root cause.
+Five more boots are needed.
+
 - **Do not ship this port's bootloader** until it survives at least 6 consecutive boots.
   One successful boot out of six proves nothing.
 - **The obvious hypothesis is already dead.** `rk3399-sdram-lpddr4-100.dtsi` is
@@ -112,7 +120,19 @@ function pointer pointing at non-code. See
   Radxa's own `rk3399-rock-4c-plus-u-boot.dtsi` both set it. **Untested.** Only that
   one property was added; `&sdhci` and the `leds` node stay out so that a failure is
   attributable. Build with `scripts/build.sh`, flash with maskrom, and the verdict is
-  six clean boots — not one.
+  six clean boots — not one. **tty14 is one success; run five more before claiming
+  anything is fixed.**
+- **An SDIO phase value is a flash fingerprint.** Nothing in the serial log says which
+  bootloader ran: TPL prints a version string, not the properties we changed, and a
+  rail voltage is never printed. `dwmmc_rockchip`'s tuned phase does distinguish them —
+  this port reads 269 on every build before vdd_log, 221 after, and Armbian reads
+  220-223. Check it first after any flash. **A missing value means the boot died before
+  tuning, not that the value was zero** — and it cuts both ways: two panics happened
+  *after* tuning at 0.64s and 1.37s, so "it always crashes around half a second" is
+  wrong.
+- **Count boots by splitting on the TPL banner, never by counting panic lines.** tty8
+  and tty13 each contain two boots, so a naive count of `Kernel panic` occurrences
+  inflates the sample. Every boot count in this repo was re-derived this way.
 - **The omission was an accident, not a decision.** The dtsi said it was skipping
   `rk3399-rock-pi-4-u-boot.dtsi` because its `&sdhci` timing and `leds` node were not
   what was missing. That reasoning covered the whole file, and `&vdd_log` went with it
@@ -197,6 +217,7 @@ Rules that are easy to get wrong:
 | `build.sh` | Fix the manifest, then build, then run 17 post-build checks |
 | `sync-overlay.sh` | Compare `overlay/` against the tree; copy either way, direction must be explicit |
 | `check-patch-sources.sh` | Check each patch source against the patch it generates |
+| `check-doc-links.py` | Check every relative markdown link resolves, including `#anchor` headings |
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
 | `assert-sdram-params-in-image.py` | Assert the RK3399 DRAM parameters are in the image |
 | `deploy.sh` | Write the image to USB / SD / eMMC |

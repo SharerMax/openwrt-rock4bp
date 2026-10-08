@@ -276,7 +276,7 @@ TPL 变大是因为设备树里多了那个参数块。**两次独立构建产�
   `VFS: Mounted root (ext4 filesystem) on device 179:2`
 
 **未解决**（⚠️ 由上面第三条引出，是当前最高优先级的问题）：
-- ❌ **本移植的 U-Boot 会导致随机 panic** —— 6 次启动 3 次内核 panic，
+- ❌ **本移植的 U-Boot 会导致随机 panic** —— base 版 6 次启动 3 次内核 panic，
   三次都是"函数指针被指向垃圾地址"。⚠️ **但那个"决定性对照"有两个共变变量** ——
   引导程序换了，**引导介质也换了**（Armbian 全从 U 盘，本移植全从 eMMC），
   **不能**据此断定是 TPL 的问题。
@@ -349,7 +349,7 @@ sudo rkdeveloptool wl 0 os.img        # 整包写进 eMMC
 | | 结论 |
 |---|---|
 | ✅ **`rockchip,sdram-params` 修复生效** | TPL 打出 `lpddr4_set_rate` + `Channel 0/1: LPDDR4, 400MHz ... Size=2048MB`。**本文记录的缺陷确实修好了。** |
-| ❌ 但**同一份 TPL 会导致随机 panic** | 6 次启动 3 次内核 panic |
+| ❌ 但**同一份 TPL 会导致随机 panic** | base 版 6 次启动 3 次内核 panic（`+vdd_log` 构建只测过 1 次） |
 | ✅ eMMC 引导**已验证** | tty8 首次从 eMMC 挂上 root |
 
 所以这个"未验证项"的最终状态不是"验证通过"，而是**"验证出了下一个问题"**：
