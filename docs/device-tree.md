@@ -273,6 +273,6 @@ pwm-regulator、`regulator-always-on`，只有 `regulator-min/max-microvolt`
 ## 相关文档
 
 - [hardware.md](hardware.md) — 硬件事实与继承到的值
-- [build.md](build.md) — 构建流程、manifest、23 项校验
+- [build.md](build.md) — 构建流程、manifest、21 项校验
 - [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md) — 缺 sdram-params 导致的变砖
 - [wifi.md](wifi.md) — WiFi 的完整排查记录

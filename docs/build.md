@@ -1,6 +1,6 @@
 # 构建
 
-构建环境、目录结构、构建流程、包集合、23 项校验、产物与可复现性。
+构建环境、目录结构、构建流程、包集合、21 项校验、产物与可复现性。
 
 ---
 
@@ -64,7 +64,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
-  build.sh                                         manifest + 构建后 23 项校验
+  build.sh                                         manifest + 构建后 21 项校验
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
   check-patch-sources.sh                           三个补丁源与生成的补丁逐一比对
@@ -113,7 +113,7 @@ spi-working-armbian.bin                            从板上读到的 SPI dump
 1. manifest 修正（禁用 4329-sdio）
 2. make defconfig      ← 改 DEVICE_PACKAGES 后必需
 3. make -j10
-4. 构建后 23 项校验     ← 不是装饰
+4. 构建后 21 项校验     ← 不是装饰
 ```
 
 日志写到 `/tmp/build-full.log`，结尾打印校验块、`REAL_EXIT_CODE` 和日志年龄。
@@ -139,7 +139,7 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
 
 ---
 
-## 23 项构建后校验
+## 21 项构建后校验
 
 前几次"看起来成功"都是因为没查最终产物 —— 构建返回 0 但镜像里缺东西。现在
 `scripts/build.sh` 结尾强制检查并写进日志：
@@ -163,85 +163,37 @@ dtb 目标重复会直接编译失败。`scripts/regen-dts-patch.sh` 现在会�
   OK/FAILED  u-boot dtb has a binman node (board -u-boot.dtsi must re-include rk3399-u-boot.dtsi)
   OK/FAILED  u-boot dtb sets vdd_log to 950mV
   OK/FAILED  both idbloader variants built
-  OK/FAILED  0103 applied: no early LPDDR4 rate switch ahead of the channel loop
-  OK/FAILED  0103 applied: both controllers switched after the configuration
-  OK/FAILED  0103 applied without rejects
+  OK/FAILED  u-boot tree has no rejected hunks
   OK/FAILED  image is newer than the staged bootloader it embeds
   OK/FAILED  staged bootloader contains the RK3399 DRAM parameters
   OK/FAILED  the image embeds that bootloader at LBA 0x40
 ```
 
-（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印 26 行 ——
+（其中一条在 `for` 循环里对 4 个包各跑一次，所以日志打印的行数比语句数多 ——
 `grep -c 'check "' scripts/build.sh` 数的是语句位置，不是执行次数。）
 
-### ⚠️ 有三类补丁，护法不一样
+### ⚠️ 曾经有过第三类补丁，护法不一样，现已消失
 
 | 补丁类型 | 例子 | 谁盯它 |
 |---|---|---|
 | 新增文件 | `0001`（内核 DTS）、`0101`（defconfig）、`0102`（板级 dtsi） | `check-patch-sources.sh` 比对 payload |
-| **修改已有上游文件** | **`0103`（`sdram_rk3399.c`）** | **`build.sh` 的三条断言，直接盯编译用的源码** |
 | 新增文件且跨多文件 | `0001` 还改了 kernel Makefile | 同第一类，但必须按文件拆 payload 才有意义 |
+| ~~修改已有上游文件~~ | ~~`0103`（`sdram_rk3399.c`）~~ | **已删除** |
 
-⚠️ **第二类没有 payload 可比对**（它改的是一个已存在的文件，补丁里只有片段），
-所以 `check-patch-sources.sh` 结构上就检查不了它。
+**第三类曾是本移植唯一偏离上游的改动**，需要另写一套断言：它改的是一个已存在的
+上游文件，补丁里只有片段，所以 `check-patch-sources.sh` 结构上就检查不了它；
+而且**这个改动在产物里完全看不见** —— 打或不打，`idbloader.img` 都是 192512 字节，
+所有内容断言的结论**完全一样**。所以当时只能在**实际参与编译的那份源码**上写三条断言，
+并且每条都做负控制。
 
-⚠️ **而这个改动在产物里完全看不见**：打或不打，`idbloader.img` 都是 192512 字节，
-上面所有内容断言的结论**完全一样**。所以断言只能打在**实际参与编译的那份源码**上。
+⚠️ **它已于 10-08 删除**：实测 2 次启动 2 次 panic、故障一字未变，是负结果。
+而它偏离上游这件事本身是负债 —— 改的是共享 DRAM 驱动，且挡住了
+「vdd_log 单独是否就够」这个问题。**测量过程留在
+[postmortem-dram-instability.md](postmortem-dram-instability.md)，负结果比补丁活得久。**
 
-⚠️ **这三条断言本身经过负控制验证** —— 不然它们可能是一组永远通过的摆设：
-把删掉的块塞回去、两次调用合并成一次、以及文件本身不存在，三种情况都会让它们失败。
-（这一步不能省：仓库里已经有过一个对所有文件都报"没找到"的检查器，
-和坏掉的检查器在输出上长得一模一样。）
-
-### 这条断言当场抓到了它自己要防的事
-
-`u-boot dtb sets vdd_log to 950mV` 加进去之后，**第二次运行就失败了** ——
-而属性明明在 dtsi 里、也在补丁 payload 里。
-
-原因不在构建：是我写的一个对照脚本（想比较「加 override」和「不加 override」两种
-dtb）改了构建树里的 dtsi，`make` 失败（直接跑 `make` 用的是宿主 gcc，缺交叉编译
-环境），而脚本用了 `set -e`，**在 restore 之前就被杀掉了**。构建树里少了那 5 行，
-下一次构建忠实地产出一个没有该属性的 dtb，**全过程没有任何警告**。
-
-⚠️ **被破坏的构建树会产出一个看起来完全正常的构建。** 只有对编译产物做内容断言才看得出来。
-
-⚠️ **所以：会改构建树的脚本，失败路径也必须恢复。** 别指望 `set -e` 之后的代码还会跑 ——
-把恢复放进 `trap`，或者干脆别在构建树里做实验（用副本）。
-
-⚠️ 顺带：这个断言第一次失败是**我自己的算术错** —— 950000 是 `0xE7EF0`，
-我写成了 `0xE8A40`。**断言写错和被测物坏掉，输出上看起来一模一样**，
-这也是为什么负控制要单独跑。
-
-### 分三批加的，因为犯的错不同
-
-**第一批（4 项，针对 `u-boot dtb`）** —— `rockchip,sdram-params` 缺失时构建返回 0、
-`idbloader.img` 正常产出、原有 9 项全过。因为那些校验问的都是**文件在不在、大小对不对、
-内容是不是这个项目要的**，没有一个问"这块板子能不能靠它启动"。
-
-**第二批（3 项，针对镜像）** —— 修好构建树之后又发现，**镜像里内嵌的那份引导程序可能是
-旧的**。构建树干净、断言全过，而镜像照样带着之前那个坏掉的引导程序 —— 因为镜像是更早
-一次构建的产物。镜像才是板子实际执行的东西，所以断言必须打在镜像上。
-
-> 那条 DRAM 参数检查不能写成 shell 一行：`rockchip,sdram-params` 是**大端 FDT 里的 u32
-> 数组**，needle 必须从编译出的 dtb 里取，并且**先在那个 dtb 自身上验证有效**再用。
->
-> 第一版 needle 是凭记忆敲的，在 `u-boot.dtb` 里 **0 命中**，却在两个容器里都"命中"
-> —— 那是巧合字节序列。**一个能在垃圾上通过的检查不是检查。**
-> 见 `scripts/assert-sdram-params-in-image.py` 的文档字符串。
-
-**第三批（1 项，针对内核 DTB）** —— `dtb exposes the SPI flash`。补上 `&spi1` +
-`flash@0` 之后 SPI 才在 OpenWrt 下可见，这项检查盯住那两行不会被后续改动丢掉。
-⚠️ 它只验证**节点存在**，**不验证能读对** —— 实测那块 SPI 读回来的不是芯片内容，
-这项检查对那种情况完全无感。**这是"通过检查"和"功能正常"分离的又一个例子。**
-
-### 两条使用纪律
-
-1. **看校验块，不要只看 `REAL_EXIT_CODE`。** 还要看日志**第一行的时间戳** ——
-   有一次 `setsid nohup` 在 `ssh` 里静默失败，校验块读的是上一轮的日志，报了 9 项 OK，
-   实际什么都没编译。
-2. **校验项按"这个缺陷能不能溜过去"来选**，不是按"我改了什么"来选；而且要打在
-   **最终产物**上，不是只打在中间目录上。
-
+⚠️ **留了一条通用断言**：`u-boot tree has no rejected hunks`。它原本混在 0103 那组里，
+但**不是 0103 专属** —— 它是唯一能发现「补丁上下文漂移、半打半上」的东西，
+而那件事天生静默。现在仍然盯住整棵 U-Boot 构建树。
 ---
 
 ## 包集合

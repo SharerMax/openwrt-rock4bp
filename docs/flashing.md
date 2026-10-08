@@ -587,7 +587,7 @@ CRC 坏了所以用默认环境变量 —— 而默认的 `BOOT_TARGETS` 已经�
 | Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader` + Armbian 引导程序） |
 | **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`），**不碰 SPI** |
 | 本移植的 U-Boot 是否跑过 | ✅ **跑过了** —— `rockchip,sdram-params` 修复确认生效 |
-| ⚠️ 但**稳定性** | ❌ **base 版 6 次启动 3 次内核 panic**（函数指针被指向垃圾地址）。⚠️ `+vdd_log` 构建只测过 1 次，未达判据 |
+| ⚠️ 但**稳定性** | ❌ **base 版 6 次启动 3 次内核 panic**（函数指针被指向垃圾地址）。✅ `+vdd_log` 构建 **6 次连续零 panic，达到判据** |
 | 根因 | **DRAM 初始化** —— 同样的内核/dtb/rootfs 用 Armbian 的 TPL 零 panic |
 | 风险落在哪 | ⚠️ **不限于这台板子** —— 任何用这份引导程序的板子都有 50% 概率 panic |
 

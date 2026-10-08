@@ -184,25 +184,15 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
 
-  # The LPDDR4 ordering experiment (0103) removes the early rate switch from
-  # sdram_rk3399.c. Nothing in the artefacts reveals that: the property it
-  # changes is a source statement, idbloader.img keeps the same 192512 bytes
-  # either way, and every check above passes identically with the patch applied
-  # or silently dropped. So assert on the source that was actually compiled.
+  # The LPDDR4 ordering experiment (patch 0103) has been removed. It reordered
+  # the rate switch in sdram_rk3399.c, it was measured to fix nothing (2 boots,
+  # 2 panics, fault unchanged), and it was the port's only divergence from
+  # upstream. Its two source assertions went with it.
   #
-  # Negated grep and an -f guard, so a missing file fails rather than passes --
-  # the same mistake the negative control in check-patch-sources.sh was written to
-  # catch. -eq on a count is arithmetic, so an absent file there would abort
-  # under set -e rather than quietly pass.
-  DRAMDRV=$UB/drivers/ram/rockchip/sdram_rk3399.c
-
-  check "0103 applied: no early LPDDR4 rate switch ahead of the channel loop" \
-    "[ -f '$DRAMDRV' ] && ! grep -q 'LPDDR4 needs to be trained at 400MHz' '$DRAMDRV'"
-
-  check "0103 applied: both controllers switched after the configuration" \
-    "[ -f '$DRAMDRV' ] && [ \$(grep -c 'dram->ops->set_rate_index' '$DRAMDRV') -eq 2 ]"
-
-  check "0103 applied without rejects" \
+  # ⚠️ The general "no rejects" check below is NOT 0103-specific and stays: it is
+  # the only thing that notices a patch whose context drifted and half-applied,
+  # which is silent by construction.
+  check "u-boot tree has no rejected hunks" \
     "! find '$UB' -name '*.rej' | grep -q ."
 
   # The image carries its own bootloader, and it must be the fixed one.

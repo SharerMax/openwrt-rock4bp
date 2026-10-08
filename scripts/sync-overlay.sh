@@ -56,7 +56,11 @@
 #
 # THIRD KIND, ADDED 2026-10-08: a patch with no overlay source at all --
 #
-#   0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch
+#   (0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch was a third
+#    kind -- it modified an existing upstream file, so it had no overlay source and
+#    no payload to compare. It was deleted on 10-08 as a measured negative result,
+#    and there is now no third kind: the port tracks upstream except where it has a
+#    reason to differ, and both remaining patches add files.)
 #       Modifies an existing upstream file (drivers/ram/rockchip/sdram_rk3399.c)
 #       instead of adding one, so there is no whole-file payload to compare
 #       against and check-patch-sources.sh cannot check it. Its rationale lives

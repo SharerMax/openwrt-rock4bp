@@ -117,38 +117,37 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
   all agreeing with `sdram-rk3399-lpddr4-400.inc`. I once decoded this as 80 from a
   buggy script and the wrong number reached the patch header and the docs; the serial
   print of 50MHz is the evidence it was wrong.
-- **DRAM initialisation is now ruled out, by experiment.** `0103-…-lpddr4-configure-before-training.patch`
-  restores the v2022.07 order (50MHz, configure, then train and switch), the serial
-  log confirms it took effect, and the fault is unchanged — tty13's second boot is
-  identical to tty12's down to the ESR, the PC `0xdfff800080099ee4`, the link register
-  and `rk3x_i2c_irq+0x198/0x3a0`. Two boots, two panics. The patch is kept so both
-  bootloaders share one DRAM sequence and future comparisons have a single variable,
-  not because it fixes anything. It diverges from upstream: delete it when it stops
-  earning its place.
-- **What is left is elsewhere in the bootloader, and the next experiment is built and
-  waiting.** The board dtsi override this port omits: `&vdd_log {
-  regulator-init-microvolt = <950000>; }`. It matters because the kernel's own node in
-  `rk3399-rock-pi-4.dtsi` is a pwm-regulator with only `regulator-min/max-microvolt`
-  and no `regulator-init-microvolt` — so whatever U-Boot leaves is what the kernel
-  keeps, and this port left nothing. Upstream `rk3399-rock-pi-4-u-boot.dtsi` and
-  Radxa's own `rk3399-rock-4c-plus-u-boot.dtsi` both set it. **Untested.** Only that
-  one property was added; `&sdhci` and the `leds` node stay out so that a failure is
-  attributable. Build with `scripts/build.sh`, flash with maskrom, and the verdict is
-  six clean boots — not one. **tty14 is one success; run five more before claiming
-  anything is fixed.**
-- **The SDIO phase value is a rail indicator, not a build fingerprint.** Nothing in the
-  serial log says which bootloader ran: TPL prints a version string, not the properties
-  we changed, and a rail voltage is never printed. `dwmmc_rockchip`'s tuned phase is the
-  only observable that moved — 269 on every pre-vdd_log boot that got as far as probing
-  it, 220-224 on every vdd_log boot, and Armbian sits at 220-223 too.
-  ⚠️ **Do not assert an exact value.** I wrote "only the new bootloader produces 221"
-  and the next boot of the same image read 224. It varies per boot; assert the band.
-  ⚠️ **A missing value means the boot died before tuning, not that the value was zero** —
-  and it cuts both ways: two panics happened *after* tuning, at 0.64s and 1.39s, so
-  "it always crashes around half a second" is wrong.
+- **DRAM initialisation is ruled out, by experiment — and the experiment has been deleted.**
+  `0103-ram-rockchip-rk3399-lpddr4-configure-before-training.patch` restored the v2022.07
+  order (50MHz, configure, then train and switch). The serial log confirmed it took
+  effect, and the fault was unchanged: tty13's second boot is identical to tty12's down
+  to the ESR, the PC `0xdfff800080099ee4`, the link register and `rk3x_i2c_irq+0x198/0x3a0`.
+  Two boots, two panics. **Deleted 10-08** — it was the port's only divergence from
+  upstream, a behaviour change to a shared DRAM driver that upstream has no reason to
+  want, and it blocked the question of whether `vdd_log` alone is sufficient. **The
+  measurements outlive the patch; see docs/postmortem-dram-instability.md.**
+- **The `&vdd_log` override is what cleared the bar.** The board dtsi override this port
+  had been omitting: `&vdd_log { regulator-init-microvolt = <950000>; }`. It matters
+  because the kernel's own node in `rk3399-rock-pi-4.dtsi` is a pwm-regulator with only
+  `regulator-min/max-microvolt` and no `regulator-init-microvolt` — so whatever U-Boot
+  leaves is what the kernel keeps, and this port left nothing. Upstream
+  `rk3399-rock-pi-4-u-boot.dtsi` and Radxa's own `rk3399-rock-4c-plus-u-boot.dtsi` both
+  set it. Only that one property was added; `&sdhci` and the `leds` node stay out so
+  that a failure stays attributable. **Six consecutive clean boots measured. The causal
+  chain is still not closed** — see the section above.
+- **Deleting 0103 is itself under test.** The six clean boots were measured *with* it, so
+  "is vdd_log alone enough?" is currently unanswered. A rebuild without it passes all 21
+  checks and its source is verified back to upstream v2025.10's shape — the early
+  `lpddr4_set_rate(dram, params, 0)` is back and the trailing `set_rate_index` is a single
+  call — but **it has not been on the board.** `u-boot.itb` is byte-identical either way
+  (0103 only touched TPL), so only `idbloader.img` changes: `76bf3bcf7be75197`, was
+  `7c65ea03783a614c`.
 - **Count boots by splitting on the TPL banner, never by counting panic lines.** tty8
   and tty13 each contain two boots, so a naive count of `Kernel panic` occurrences
-  inflates the sample. Every boot count in this repo was re-derived this way.
+  inflates the sample. Every boot count in this repo was re-derived this way, and the
+  re-derivation found real errors: tty2 and tty3 had mounted root all along, and two
+  "always crashes at about half a second" panics were actually at 1.39s.
+
 - **The omission was an accident, not a decision.** The dtsi said it was skipping
   `rk3399-rock-pi-4-u-boot.dtsi` because its `&sdhci` timing and `leds` node were not
   what was missing. That reasoning covered the whole file, and `&vdd_log` went with it
