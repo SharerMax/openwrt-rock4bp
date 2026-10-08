@@ -385,6 +385,13 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
 - [x] Phase 5p：**删掉 `0103` 后重测 —— 又 6 次连续零 panic**（tty15）。
       ✅ **`vdd_log` 单独就够，`0103` 不需要**，本移植**不再偏离上游**。
       `u-boot.itb` 逐字节未变（0103 只影响 TPL），串口也确认切频顺序已回到上游
+- [x] Phase 5q：**根因分析** —— 把 vmlinux 的正确指令与实际执行的指令逐条比对，
+      **三个故障实例全部只差一个比特**（两处内核正文 + 一处函数指针）。
+      定位到 `vdd_log` 修复前被 `pwm_regulator_init_boot_on()` 停在 **0% 占空比**
+      （= 该轨下限）。⚠️ **仍缺一环**：内核 `supply_map` 里没有节点消费这条轨，
+      设备树没描述板子的真实连线
+- [ ] Phase 5r：**测 `init = <800000>`（占空比 0%）** —— 一个构建就能分开
+      「轨必须真的被驱动」与「950mV 这个值本身」。⚠️ 每次仍需 6 次启动判定
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）
