@@ -84,9 +84,11 @@ function pointer pointing at non-code. See
 **The `&vdd_log` build is on the board and one boot succeeded. That is one boot, not
 six.** Never let this be reported as fixed. The judgement is six consecutive clean
 boots: tty14 succeeded once and, as a separate signal, the SDIO phase tuning value
-moved from 269 — constant across all five earlier boots of this port — to 221, which
-lands inside Armbian's 220-223 range. Treat that as encouraging and as a *flash
-fingerprint* (only the new bootloader produces 221), not as a located root cause.
+moved from 269 to 221, which lands inside Armbian's 220-223 range. Three of the six
+earlier boots of this port recorded a phase and all three read 269; the other three
+died before the SDIO controller was probed, so they recorded nothing. Treat that as
+encouraging and as a *flash fingerprint* (only the new bootloader produces 221),
+not as a located root cause.
 Five more boots are needed.
 
 - **Do not ship this port's bootloader** until it survives at least 6 consecutive boots.
@@ -125,11 +127,11 @@ Five more boots are needed.
 - **An SDIO phase value is a flash fingerprint.** Nothing in the serial log says which
   bootloader ran: TPL prints a version string, not the properties we changed, and a
   rail voltage is never printed. `dwmmc_rockchip`'s tuned phase does distinguish them —
-  this port reads 269 on every build before vdd_log, 221 after, and Armbian reads
-  220-223. Check it first after any flash. **A missing value means the boot died before
-  tuning, not that the value was zero** — and it cuts both ways: two panics happened
-  *after* tuning at 0.64s and 1.37s, so "it always crashes around half a second" is
-  wrong.
+  this port read 269 on every boot that got as far as probing it before vdd_log, and
+  221 after; Armbian reads 220-223. Check it first after any flash. **A missing value
+  means the boot died before tuning, not that the value was zero** — and it cuts both
+  ways: two panics happened *after* tuning, at 0.64s and 1.39s, so "it always crashes
+  around half a second" is wrong.
 - **Count boots by splitting on the TPL banner, never by counting panic lines.** tty8
   and tty13 each contain two boots, so a naive count of `Kernel panic` occurrences
   inflates the sample. Every boot count in this repo was re-derived this way.
