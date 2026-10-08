@@ -382,8 +382,9 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
       ⭐ 附带拿到一条独立信号：SDIO 相位从 269 跳出到 221–225（Armbian 也在 220–223），
       这是「改动确实起了作用」的间接证据。⚠️ 但相位**每次启动都会变**，所以它是
       电压轨指示器，不是构建指纹
-- [x] Phase 5p：**删掉 `0103` 后重测** —— 让「`vdd_log` 单独是否就够」这个问题有答案。
-      🧪 构建中，待 Maskrom 刷入与 6 次重测
+- [x] Phase 5p：**删掉 `0103` 后重测 —— 又 6 次连续零 panic**（tty15）。
+      ✅ **`vdd_log` 单独就够，`0103` 不需要**，本移植**不再偏离上游**。
+      `u-boot.itb` 逐字节未变（0103 只影响 TPL），串口也确认切频顺序已回到上游
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）

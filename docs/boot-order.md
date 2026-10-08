@@ -111,6 +111,118 @@ TPL/SPL 的可见性，所以之前没人留意它能否引导 —— 但它一�
 
 ---
 
+## ⚠️ 2026-10-08：SPI 现在根本不被探测，和文档里记的不一样
+
+⚠️ **本文后面那一节说 `/dev/mtd0` 出现过、`rockchip-spi` 驱动已绑定。
+今天（10-08）在 OpenWrt 25.12.5 / 6.12.94 上复现不出来 —— 现在压根没有 `/dev/mtd*`。**
+下面先记实测，再解释为什么「记的和测的不一致」这件事本身还没结清。
+
+### 实测（板子可达，root，无密码）
+
+```
+/dev/mtd*                    不存在
+/sys/bus/platform/devices/ff1d0000.spi/driver   不存在（未绑定）
+/sys/bus/platform/drivers/   有 rockchip-spi（驱动注册了，但没绑上）
+dmesg: [18.411357] platform ff1d0000.spi: deferred probe pending: (reason unknown)
+```
+
+**设备树是对的**，不是节点写错：
+
+```
+spi@ff1d0000   status=okay   children: ... flash@0 ...     ← spi1 在 ff1d0000，enabled
+```
+
+### 机制：一次**静默**的 defer
+
+`drivers/spi/spi-rockchip.c:877`：
+
+```c
+ctlr->dma_tx = dma_request_chan(rs->dev, "tx");
+if (IS_ERR(ctlr->dma_tx)) {
+        if (PTR_ERR(ctlr->dma_tx) == -EPROBE_DEFER) {
+                ret = -EPROBE_DEFER;          /* 直接返回，没有任何 dev_err */
+                goto err_disable_pm_runtime;
+        }
+        dev_warn(rs->dev, "Failed to request TX DMA channel\n");
+```
+
+`dmas` / `dma-names = "tx", "rx"` 是**上游 `rk3399-base.dtsi:865` 就有的**，指向
+`&dmac_peri`（`ff6d0000`，compatible `arm,pl330`）。DMA 通道拿不到就整条 probe 挂起，
+而这条路径**不打日志** —— 所以只有 deferred probe 超时后那句 `(reason unknown)`。
+
+⚠️ **本移植没有引入这个依赖。** `overlay/kernel/rk3399-rock-4b-plus.dts` 的 `&spi1`
+块只写了 `status = "okay"` 和 `flash@0`，没碰 `dmas`。
+
+### 同批挂起的三兄弟
+
+```
+[18.409961] amba ff6d0000.dma-controller: deferred probe pending: (reason unknown)
+[18.410677] amba ff6e0000.dma-controller: deferred probe pending: (reason unknown)
+[18.411357] platform ff1d0000.spi:         deferred probe pending: (reason unknown)
+```
+
+`/sys/bus/amba/devices/` 里两个 PL330 都在，`/sys/bus/amba/drivers/dma-pl330` 也注册了，
+**但都没绑定**。所以 SPI 的挂起是在它们的**下游**，不是并列的三个独立问题。
+
+### 内核配置：不是本移植改的
+
+```
+CONFIG_SPI_ROCKCHIP=y
+CONFIG_PL330_DMA=y                 → drivers/dma/pl330.o 已编译
+# CONFIG_AMBA_PL08X is not set
+```
+
+`amba-pl08x.c` 没有被编进去，但 `pl330.c` 编了 —— **两条路径都能驱动 `arm,pl330`，
+所以缺 `AMBA_PL08X` 本身不是原因。**
+
+⚠️ 而 `0101-configs-add-rock-4b-plus-rk3399-defconfig.patch` 里的 `CONFIG_*`
+**全是 U-Boot 的**（`CONFIG_SYS_LOAD_ADDR`、`CONFIG_DEBUG_UART_BASE`……）。
+**本移植没有改过内核配置**，所以上面的组合完全来自 OpenWrt 上游的 rockchip config。
+
+### ⚠️ 未结清：文档里那次 `/dev/mtd0` 到底是在哪套系统上测的
+
+本文后面那节写「两套完全不同的内核（6.12 与 6.18）都读不对」，言下之意 6.12 那边
+`mtd0` 是存在的。**今天的 6.12.94 复现不出来。**
+
+两种可能，我还没有证据分辨：
+
+| | 说法 | 需要什么才能定 |
+|---|---|---|
+| A | 当时那次其实是在 **Armbian** 上测的，文档把两套系统的结果混成了一句 | 回看当时的命令与输出 |
+| B | OpenWrt 6.12 **确实**曾经探测成功，后来某次重建改了 config 或 DTS | 逐版本二分构建 |
+
+⚠️ **所以「SPI 曾经可见」这个前提，目前是不成立的。** 后面那节的结论
+（读出来的数据是错的、不能拿来做备份）**仍然有效** —— 但它是在「能读到」的前提下得出的，
+而今天连「能读到」都不成立了。**两层都要修，不能只认一层。**
+
+### 如果要修，最小改动是去掉 `dmas`
+
+SPI 用 PIO 完全能工作，DMA 只是加速。所以在本移植的 `&spi1` 块里：
+
+```dts
+&spi1 {
+	status = "okay";
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	flash@0 { ... };
+};
+```
+
+没有 `dmas` 时 `dma_request_chan()` 拿不到 provider 会返回 `-ENODEV` 而不是
+`-EPROBE_DEFER`，`spi-rockchip` 会打一条 `Failed to request TX DMA channel` 警告
+然后**继续用 PIO** —— 也就是绕开这条静默挂起的路径，而不是再加一层猜测。
+
+⚠️ **⚠️ 但先别急着改。** 本文的结论是：**这块 SPI 就算探测成功，读出来的也是错的**
+（0 个 FDT magic、0 条 U-Boot 字符串、整片数据与芯片内容不符）。
+**一个会给出错误数据的 `/dev/mtd0` 比没有更危险** —— 它能通过「读稳定吗」这类检查，
+备份下来的却不是芯片内容。
+
+所以顺序应该是：先把 PL330 那条挂起链查清楚（为什么两个 DMA 控制器也不绑），
+再决定是恢复 DMA 还是退到 PIO。**直接改 SPI 只会把「静默失败」换成「静默给出错误数据」。**
+
+---
+
 ## ⚠️ Linux 从这块 SPI 读不到正确的内容
 
 **不是"读不稳定"，是读到的根本不是芯片内容。**
@@ -299,39 +411,58 @@ U-Boot 读得对（能起、能读 env），Linux 读不对 —— 而**硬件�
 
 | | 状态 |
 |---|---|
-| Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader` + Armbian 引导程序） |
+| Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader`） |
 | **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`），且**不碰 SPI** |
-| SPI 上现有的引导程序 | Armbian U-Boot（救回时刷的，可用，**6 次启动零 panic**） |
-| 本移植的 U-Boot 是否跑过 | ✅ **跑过了** —— 但 **6 次启动 3 次内核 panic** |
-| `rockchip,sdram-params` 修复 | ✅ **确认生效**（TPL 打出 `lpddr4_set_rate` + 两通道各 2048MB） |
-| OpenWrt 从 microSD 启动 | ✅ 已验证（Armbian U-Boot 引导，稳定） |
-| OpenWrt 从 eMMC 启动 | ✅ 已验证（tty8，本移植 U-Boot，但那次之后又崩了） |
-| 从运行中系统读写 SPI | ❌ 不可能（读不对，无法验证） |
-| Linux 读不对的确切原因 | ❌ **未确认**（2026-10-07 排除 6 项后仍未定位；下一步是 U-Boot `sf read` 取 ground truth） |
+| ⚠️ SPI 上是否还有可引导镜像 | ❌ **没有** —— `Trying to boot from BOOTROM` 说明 ROM 在 SPI 上没找到东西 |
+| ⚠️ **当前唯一恢复路径** | **只有 Maskrom**。SPI 不构成兜底 |
+| 本移植的 U-Boot 是否跑过 | ✅ 跑过，而且现在 **6 次连续启动零 panic** |
+| `rockchip,sdram-params` 修复 | ✅ **确认生效**（TPL 打出两通道各 2048MB） |
+| OpenWrt 从 eMMC 启动 | ✅ 已验证（rootfs 挂载 + 到 shell） |
+| 从运行中系统读写 SPI | ❌ **现在连 `/dev/mtd*` 都没有**（见上面那一节） |
+| Linux 读不对 SPI 的确切原因 | ❌ 未确认，且**现在多了一层：SPI 根本不被探测** |
+| 上游 PR | ❌ **不要提** —— 根因未定位，别人无法复现 |
 
-### ⚠️ 本移植的 U-Boot 会导致随机 panic
+### ⚠️ 本移植的 U-Boot 的稳定性问题已经过了判据
 
-**镜像自带的那份引导程序已经在真机上执行过，DRAM 参数修复确实生效** —— 但同一份 TPL
-在 6 次启动里造成 3 次内核 panic（三次都是"函数指针被指向垃圾地址"）。
-
-决定性对照：**同样的内核、同样的 dtb（哈希逐字节相同）、同样的 rootfs**：
-
-| 引导程序 | 启动次数 | 挂上 root | panic |
+| 构建 | 启动次数 | panic | 备注 |
 |---|---|---|---|
-| Armbian U-Boot | 6 | 2 | **0** |
-| 本移植 U-Boot | 6 | 1 | **3** |
+| base | 6 | **3** | 50% |
+| +0103 | 2 | **2** | 0103 修不好任何东西，**已删除** |
+| +0103 +vdd_log | 6 | **0** | 达到判据 |
+| +vdd_log（删掉 0103） | 6 | **0** | **见 postmortem** |
+| Armbian U-Boot | 6 | 0 | 对照组 |
 
-所以根因在 **DRAM 初始化**这一层，不是软件逻辑。完整证据链见
-[postmortem-dram-instability.md](postmortem-dram-instability.md)。
+⚠️ **「达到判据」不等于「根因找到」。** 因果链没闭合 —— 没有任何一环把电压轨连到
+`rk3x_i2c_irq` 附近的崩溃点。而且故障本来是间歇性的，6 次只说明「在 6 次里没出现」。
 
-⚠️ **风险的分布变了。** 早先写"风险在不贴 SPI 的量产板上，那类板只能靠镜像自带那份"
-—— 现在那份确实能启动，但**不稳定**。所以问题不再是"能不能引导"，而是
-"引导程序的 DRAM 参数是否有缺陷"。
+### ⚠️ 一个被我自己的断言判死的干净启动
 
-**SPI 在这块板上仍然是保护**（Armbian 那份稳定可用），但**不能再把它说成"唯一的
-兜底"** —— 兜底本身也有 DRAM 稳定性问题，只是它没暴露。
+第一次跑删除 0103 后的矩阵时，6 轮里第 6 轮报了 FAIL：
+
+```
+phase=215  MemTotal=3961704 kB  boot_id=89f84ba7-…
+[VFS: Mounted root (ext4 filesystem) on device 179:2.
+❌ FAIL  phase 215 -- neither the 22x band nor 269
+```
+
+**那次启动是干净的** —— 新 `boot_id`、`MemTotal` 一致、root 挂上、dmesg 异常 0 处。
+FAIL 来自我写的那条相位区间断言。
+
+⚠️ **同一条断言已经错三次了**：`== 221` 被 224 打掉，`220-224` 被 225 打掉，
+`22[0-9]` 被 215 打掉。同一份镜像 12 次启动的实测值是：
+
+```
+221 224 225 223 223 223 226 226 222 224 222 215
+```
+
+**跨度 11，而且完全覆盖 Armbian 的 220-223。** 它是时序余量的**测量值**，不是标识符。
+
+⚠️ **一条因为错误理由失败的检查，和一条因为错误理由通过的检查一样糟。**
+现在脚本只记录这个值，**唯一作为判据的是 269**（那是所有 vdd_log 之前的构建都读到的值，
+远在这个区间之外）。
 
 ---
+
 
 ## 相关文档
 

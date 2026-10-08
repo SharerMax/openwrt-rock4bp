@@ -136,13 +136,23 @@ while [ $i -le $ROUNDS ]; do
 	echo "  phase=$ph  MemTotal=$mem kB  reachable after ${up}s" | tee -a $OUT
 	echo "$res" | sed -n 's/^mount=/  /p' | tee -a $OUT
 
+	# Only 269 is a verdict. See the header: on a correct build the phase
+	# varies over an 11-wide range (215-226 measured), so any band assertion
+	# eventually marks a clean boot as broken. It did, three times.
+	# A missing phase IS still a verdict -- it means the boot died before the
+	# SDIO controller was probed, which is a real failure mode.
+	#
+	# Uses $ph, not $ph_n: $ph_n was never assigned and every round therefore
+	# reported "no phase recorded". The negative control below only covered the
+	# unreachable case, so it passed while this was broken. It now also covers
+	# "reachable but the field is empty", which is how this shipped.
 	verdict=""
-	case "$ph" in
-		22[0-9]) ;;
-		'')      verdict="no phase recorded -- died before probing SDIO" ;;
-		269)     verdict="phase 269 -- this is a pre-vdd_log build" ;;
-		*)       verdict="phase $ph -- neither the 22x band nor 269" ;;
-	esac
+	if [ -z "$ph" ]; then
+		verdict="no phase recorded -- died before probing SDIO"
+	elif [ "$ph" = "269" ]; then
+		verdict="phase 269 -- this is a pre-vdd_log build, not what is under test"
+	fi
+	echo "  phase recorded: ${ph:-none} (not asserted; see header)" | tee -a $OUT
 
 	if [ -n "$verdict" ]; then
 		echo "  ❌ FAIL  $verdict" | tee -a $OUT
@@ -152,7 +162,7 @@ while [ $i -le $ROUNDS ]; do
 		fail=$((fail + 1)); echo "$i FAIL dmesg=$bad" >> $OUT
 	else
 		echo "  ✅ clean" | tee -a $OUT
-		pass=$((pass + 1)); echo "$i PASS phase=$ph boot_id=$bid mem=$mem" >> $OUT
+		pass=$((pass + 1)); echo "$i PASS phase=${ph:-none} boot_id=$bid mem=$mem" >> $OUT
 	fi
 
 	prev=$bid
