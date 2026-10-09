@@ -52,7 +52,17 @@ BOARD=${BOARD:-root@192.168.3.8}
 ROUNDS=${ROUNDS:-6}
 WAIT_DOWN=${WAIT_DOWN:-120}     # seconds to wait for the board to go away
 WAIT_UP=${WAIT_UP:-180}         # seconds to wait for it to come back
-OUT=${OUT:-/tmp/reboot-matrix.txt}
+# ⚠️ The log lands in the repo's log/, dated, NOT in /tmp.
+#
+# It used to default to /tmp/reboot-matrix.txt, and two of the four acceptance
+# runs from this port were lost to a /tmp clear on the build host. The verdict
+# "6 clean boots" is worthless later without the run it came from, and that
+# log is the only record of the boot_ids -- so it goes where logs are kept.
+#
+# log/ is gitignored, which is correct: a boot log is evidence, not source. It
+# still has to outlive the machine, and /tmp does not.
+OUT=${OUT:-$(cd "$(dirname "$0")/.." && pwd)/log/reboot-matrix-$(date +%Y%m%d-%H%M%S).txt}
+mkdir -p "$(dirname "$OUT")"
 
 ssh_opts="-o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=yes"
 

@@ -84,11 +84,16 @@ rk3399_loader_v1.27.126.bin        -> eMMC    (what this repo has always used)
 rk3399_loader_spinor_*.bin        -> SPI NOR (a different file entirely)
 ```
 
+There is also a second route: `rkdeveloptool cs [1=EMMC, 2=SD, 9=SPINOR]` switches the
+current storage, and the tool reads the selection back to confirm it took. Two
+independent routes to SPI means a wrong loader guess is not a dead end.
+
 The docs said "`wl` only touches eMMC, so SPI is unreachable". The observation was
 right and the mechanism was wrong, and the error had no symptom: with the wrong
 loader `wl` **reports success while writing to the other medium**. A wrong
-mechanism gets a usable route recorded as closed. `scripts/flash-spi.sh` refuses a
-loader whose name lacks `spinor`.
+mechanism gets a usable route recorded as closed. `scripts/flash-spi.sh` checks the
+loader name, confirms the medium with `cs 9` before writing, and reads back with
+`rl` afterwards.
 
 **The payload already existed and nobody noticed.** `CONFIG_ROCKCHIP_SPI_IMAGE=y` was
 already in the defconfig, so U-Boot has been emitting `u-boot-rockchip-spi.bin`
@@ -104,27 +109,158 @@ variant; it has negative controls and they have been run.
 unsettled: Radxa ships `spinor v1.15.114` and documents that v1.72-and-later boards
 need `v1.20.126`, and this board's revision has not been identified.
 
-## The port's U-Boot now clears the six-boot bar; the cause is still open
+## The port's U-Boot's cause: located and confirmed by measurement
 
-**The `&vdd_log` build now clears the bar this repository set: six consecutive clean
-boots.** Measured 2026-10-08 with `scripts/check-reboot-matrix.sh` — six boots, six
-distinct `boot_id`s, identical `MemTotal`, zero panic/oops/BUG lines in dmesg. The
+**One missing device-tree property, and U-Boot never programs the PWM duty.**
+24 clean boots across four builds; the mechanism was read off the hardware on
+2026-10-10 over a serial console that did not exist until that morning.
+
+**Twenty-four consecutive clean boots, across four different builds of this port's
+bootloader.** 2026-10-08 with patch `0103` still present (six boots), then again with
+`0103` deleted (six more, tty15), then 2026-10-09 with `regulator-init-microvolt` at
+**800 mV** (six more), then 2026-10-10 at **1100 mV** (six more). Six distinct
+`boot_id`s per run, identical `MemTotal`, zero panic/oops/BUG lines in dmesg. The
 baseline it replaces was 3 panics in 6 boots (50%); Armbian's bootloader was 7 boots,
-zero panics. The only change was `&vdd_log { regulator-init-microvolt = <950000>; }`.
+zero panics.
 
-**The cause is still NOT located, and that is the remaining problem.** Six clean boots
-is a threshold, not a diagnosis. Specifically:
+**What the 2026-10-09 analysis established, and what it did not.** Read these as two
+separate claims, because conflating them is how this repository got its previous claims
+wrong:
 
-- **The causal chain was never closed.** The hypothesis is that the rail voltage
-  U-Boot left behind degraded the SDIO timing margin (phase 269 versus the low 220s)
-  and that this relates to the panic. Nothing links rail voltage to the crash site at
-  `rk3x_i2c_irq`. It is **compatible, not established.**
-- **Six clean boots does not mean a zero failure rate.** The fault was intermittent.
-  Six boots say "did not occur in six", not "cannot occur".
-- **Do not propose an upstream PR yet.** Without a located cause nobody else can
+- **Established: the fault form is single-bit corruption.** Three instances, each exactly
+  one bit from correct — `tick_nohz_stop_idle+0x38` (vmlinux `d5033abf`, ran `d5033ab7`),
+  `el1h_64_irq+0x18` (`a90637ec` vs `a906376c`), and PC `ffff800080099ee4` vs
+  `dfff800080099ee4`. One bit, three times, in different code, is signal integrity —
+  not "memory full of garbage".
+- ~~**Established: the mechanism** — the rail sat at **0% for the whole kernel
+  session**.~~ **RETRACTED 10-09 by measurement.** The reasoning was that
+  `pwm_regulator_init_boot_on()` writes `pstate.duty_cycle = 0` and continuous mode
+  maps 800000 → 0%, 950000 → 25%. But building the **0% case on purpose** — `init =
+  <800000>` — gave **6/6 clean boots**. A rail genuinely sitting at its minimum would
+  have been the broken state, and it was not. **Do not quote the 0% claim.**
+- **Established: the fault form.** (kept, above) Single-bit corruption, three times.
+- **Established: `set_voltage` is what actually writes.** `regulator_summary` reports
+  `vdd_log ... 800mV ... 800mV 1400mV`, and the first figure is the current-voltage
+  column rather than the min/max constraints — only a successful `set_voltage` moves
+  it. `pwm_regulator_set_voltage()` writes the duty **unconditionally**, whereas
+  `pwm_regulator_init_boot_on()` returns early `if (pstate.enabled)`. Without
+  `regulator-init-microvolt` the former is never called at all.
+- ~~**NOT established: that "the duty was never written" is why it failed.**~~
+  **ESTABLISHED 10-10 by serial read.** `md 0xff420020 4` at the U-Boot prompt gives
+  `duty/period` = 603/1207 = 49.96%, the configured duty, and `ctrl & 0x3 == 0x3`. On
+  the failing builds U-Boot prints `Cannot find regulator pwm init_voltage`, and that
+  line appears in **every** 269-phase capture and **no other** — see
+  `scripts/classify-serial-logs.sh`. The claim it needed serial for is now measured.
+- **NOT established: the last link.** Nothing in the kernel's `supply_map` consumes
+  `vdd_log`, and no `*-supply` property in the compiled dtb references its phandle.
+  **The device tree does not describe this board's real wiring**, so whatever this rail
+  does cannot yet be connected to the crash site at `rk3x_i2c_irq`.
+- **NOT measured: any duty cycle, ever.** The 0% claim came from source plus linear
+  arithmetic. The board has no `/dev/mem`, `CONFIG_PWM_SYSFS` is off so there is no
+  `/sys/class/pwm/pwmchip0/pwm0/`, and `debugfs/pwm` is empty. `regulator_summary`
+  reports *requested* voltage. Confirming needs a multimeter or a TTL adapter.
+- **Do not propose an upstream PR yet.** Without the last link nobody else can
   reproduce it, so nobody can tell whether the voltage line is actually necessary.
+- **Twenty-four clean boots does not mean a zero failure rate.** The fault was
+  intermittent. Twenty-four boots say "did not occur in twenty-four", not "cannot occur".
+- **Three passing values across a wide range was the open problem, and the serial read
+  answered it.** "Why does any explicit value work?" — because **the value is not the
+  variable; whether the duty was ever written is.** `duty/period` measured 603/1207 =
+  49.96%, i.e. the configured value, and the phase moves linearly with it. That is the
+  answer, and it was only reachable with a serial console.
 
-**Do not report this as "root cause found".** Report it as "threshold met, cause open".
+**Report this as "root cause located and confirmed by measurement, physical
+explanation still open".** Those are two different statements and the difference is the
+only thing worth being careful about here:
+
+- **Confirmed.** Missing `regulator-init-microvolt` → U-Boot prints
+  `Cannot find regulator pwm init_voltage` → `set_voltage` never called → only `ctrl`
+  is written, `period`/`duty` keep reset values → the kernel's `boot_on` then returns
+  early because `ctrl & 0x3 == 0x3`, so **nothing ever programs the duty** → phase 269
+  → single-bit corruption → panic. Every link has a source reference or a measurement
+  behind it.
+- **Still open, and it does not affect the fix.** What the rail physically does on this
+  board when unprogrammed, and where it goes. The device tree does not describe the
+  board's wiring and `supply_map` has no consumer, so this cannot be derived locally.
+  **A one-property fix does not need it.**
+
+⚠️ **Do not upgrade that to "fully understood".** The open part is an *explanation*, not
+a *fix*, and the difference shows up in the upstream PR: nobody can reproduce this yet,
+because nobody else has a board whose rail behaves this way, and the port cannot say
+*why* the line is necessary — only that it is.
+
+⚠️ **The 800 mV experiment falsified the prediction. Do not resurrect it.**
+`regulator-init-microvolt = <800000>` is duty 0%, which the analysis said was
+identical to the broken state. It passed 6/6 clean. So **"the rail must actually be
+driven" is dead** — and so is "950 mV is special", because that hypothesis also
+predicted a panic. **Neither hypothesis had a column predicting the outcome that
+happened, so the experiment could only falsify; it could not identify.** A prediction
+table whose columns agree is not a discriminator, and writing one that claimed to be
+was the mistake.
+
+⚠️ **What survives is narrower and stranger: the SDIO phase tracks the value written.**
+269 before the fix, 210-213 at 800 mV, 215-226 at 950 mV — monotonic in voltage. If
+merely *writing* the duty mattered, the phase would not move with the value. And the
+269 point is the anomaly: if the pre-fix rail really sat at 0%, it should have landed
+near 210-213, not 50 higher. So **"the pre-fix rail sat at 0%" is itself probably
+wrong.** The likelier mechanism is the early return in `pwm_regulator_init_boot_on()`
+(`if (pstate.enabled) return 0;`) against the unconditional write in
+`pwm_regulator_set_voltage()`: without an init value the duty is **never written at
+all**, and the pin is left in whatever state U-Boot left. ⚠️ **That is a hypothesis,
+not a result** — confirming it needs to know what U-Boot left, and there is no serial
+console to read it from.
+
+⚠️ **Verified on the board that `set_voltage` does run**: `regulator_summary` shows
+`vdd_log ... 800mV ... 800mV 1400mV`, where the first figure is the current voltage
+column, not the min/max constraints. ⚠️ **That is still the requested value, not a
+measurement** — no `/dev/mem`, `CONFIG_PWM_SYSFS` is off so there is no `pwm0/`, and
+`debugfs/pwm` is empty. **"The duty really was 0%" has still never been measured.**
+
+⚠️ **Serial became readable on 2026-10-10 (COM4 @ 1500000 baud) and that closes
+the chain by measurement.** At the U-Boot prompt, before the kernel runs:
+
+    => md 0xff420020 4
+    ff420020: 0000019e 000004b7 0000025b 00000013
+                cntr   period    duty     ctrl
+
+`duty/period` = 603/1207 = **49.96%**, which is exactly `1100000`'s duty, and
+`ctrl & 0x3 == 0x3` means enabled. **U-Boot writes it, not the kernel.** Deriving the
+address and offsets rather than guessing them: `pwm2` is `0xff420020` in `rk3399-base.dtsi`
+(in the **PMU** domain, not `0xff38xxxx`), and `rockchip,rk3399-pwm` is in neither
+side's `of_match_table`, so both fall through to `rk3288-pwm` → `pwm_data_v2` →
+`cntr/period/duty/ctrl` at `0x00/04/08/0c`.
+
+⚠️ **I was wrong when I said U-Boot does not know `regulator-init-microvolt`.** I
+grepped `drivers/regulator/*.c`; the file is `drivers/power/regulator/pwm_regulator.c`.
+It reads the property at line 107 and applies it at 134-135. So **the fix is a U-Boot
+fix and the kernel's `set_voltage` is redundant** — the kernel's `boot_on` returns
+early precisely because U-Boot already enabled the channel.
+
+⚠️ **The single most valuable grep in this repository.** That file prints
+`Cannot find regulator pwm init_voltage` when the property is missing, and **that line
+appears in every 269-phase log and in no other log, without exception** — including
+tty7 and tty12, which died before probing SDIO and so have no phase at all. It sits
+between `PMIC: RK808` and `Core: 307 devices`, i.e. in driver-model probe. This evidence
+was in `log/` for three months and nobody read it, because there was no serial console
+and no reason to open U-Boot's regulator source. **A criterion is often already in hand;
+nobody asked.**
+
+⚠️ **The second experiment turned the phase into a measurement, and that is the real
+result.** Three explicit values, 30 boots between them, are collinear:
+**0% → 211.5, 25% → 222.2, 50% → 232.5**, least-squares residual **≤ 0.1 phase**. So
+**the rail really does move the SDIO timing margin** — that link is no longer merely
+compatible. And the pre-fix reading of **269 is off that line**: extrapolating it needs
+**1620 mV, 220 mV above the regulator's 1400 mV maximum**. So 269 is not any voltage
+this rail can produce. It is a different electrical state, and the last version of
+"the rail sat at 0%" is dead with it. ⚠️ **But that only says what the pre-fix state was
+not.** "The duty was never written at all" is the only hypothesis left standing and it
+is still unproven.
+
+⚠️ **Never judge one boot as a result.** The first 800 mV boot came back clean and was
+worth nothing; a 50% failure rate produces a clean boot half the time. The verdict came
+from the sixth. Check the image identity too — read `u-boot.itb` back off eMMC and
+compare it, because a whole-image rewrite also rotates the host key, and "one clean
+boot" is not even attributable without both.
 
 ⚠️ **The SDIO phase value is a rail indicator, not a build fingerprint.** It is the only
 observable in the logs that moved — 269 on every pre-vdd_log boot that probed SDIO, and
@@ -214,10 +350,15 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
   Armbian, and its host key changed when that image was written
   (`SHA256:qgJ+OCni…`, old Armbian-era key `SHA256:bkOdpYyr…` retired). **Check which
   key you have before assuming a host is the board.**
-- **No serial console means the reboot loop is the only way to reach the six-boot
-  threshold here.** With the board on the network, reboot over ssh and poll `boot_id`
-  gives the same evidence the serial capture gave for Armbian: each boot must show a
-  new `boot_id`, a clean dmesg, and a phase in the rail band. **A boot that never comes
+- ⚠️ **A serial console now exists (2026-10-10, `COM4` @ 1500000 baud, on the Windows
+  box).** It was unavailable for the whole previous investigation, which is why the
+  mechanism took a month to pin down. It gives TPL/SPL output, the U-Boot prompt, and
+  `md`/`mw` on any register. **Reach for it first next time.** MobaXterm holds `COM4` when
+  the user has it open — ask them to release it, and check the MAC before trusting a
+  host after a whole-image rewrite.
+- **The reboot loop is how the six-boot threshold is reached.** With the board on the
+  network, reboot over ssh and poll `boot_id`. Each boot must show a new `boot_id`, a
+  clean dmesg, and a phase in the rail band. **A boot that never comes
   back is a result, not a retry** — the panic lands at 0.5-1.4s, before networking.
 - **`nohup reboot &` over ssh does not reboot the board.** The process dies with the
   pty when ssh exits, the board never goes down, and the result looks exactly like a
@@ -274,11 +415,12 @@ Rules that are easy to get wrong:
 
 | Script | Use |
 |---|---|
-| `build.sh` | Fix the manifest, then build, then run 17 post-build checks |
+| `build.sh` | Fix the manifest, then build, then run **24** post-build checks |
 | `sync-overlay.sh` | Compare `overlay/` against the tree; copy either way, direction must be explicit |
 | `check-patch-sources.sh` | Check each patch source against the patch it generates |
 | `check-doc-links.py` | Check every relative markdown link resolves, including `#anchor` headings |
 | `check-reboot-matrix.sh` | Reboot the board N times and judge each boot; needs no serial console |
+| `classify-serial-logs.sh` | Sort serial captures by the U-Boot `Cannot find regulator pwm init_voltage` line and the SDIO phase |
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
 | `assert-sdram-params-in-image.py` | Assert the RK3399 DRAM parameters are in the image |
 | `deploy.sh` | Write the image to USB / SD / eMMC |

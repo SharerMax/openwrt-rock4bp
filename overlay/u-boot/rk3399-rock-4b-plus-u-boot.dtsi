@@ -130,25 +130,63 @@
 
 &vdd_log {
 	/*
-	 * EXPERIMENT 2026-10-09: 800000, the bottom of the rail's range.
+	 * &vdd_log { regulator-init-microvolt = <950000> }
 	 *
-	 * This is the discriminating test for the root-cause analysis, and it is
-	 * predicted to FAIL. In continuous mode the driver maps the range linearly:
+	 * This is the whole fix, and it is one property.
 	 *
-	 *     800000 -> duty  0%     875000 -> 12%   950000 -> 25%   1400000 -> 100%
+	 * ⚠️ WITHOUT IT, U-Boot never programs the PWM duty at all. Not because it
+	 * fails to, but because it is never asked:
 	 *
-	 * And pwm_regulator_init_boot_on() already parks this rail at duty 0 for the
-	 * whole kernel session, because the node has regulator-boot-on and no
-	 * enable-gpios. So 800000 reproduces the broken state exactly.
+	 *   drivers/power/regulator/pwm_regulator.c
+	 *     107: init_voltage = dev_read_u32_default(dev, "regulator-init-microvolt", -1);
+	 *     109:     printf("Cannot find regulator pwm init_voltage\n");
+	 *     134: if (priv->init_voltage)
+	 *     135:     pwm_regulator_set_voltage(dev, priv->init_voltage);
 	 *
-	 *   still panics  -> the rail must actually be driven; 950 mV merely happens
-	 *                    to be a non-zero duty. Root cause is then one step away:
-	 *                    find what the rail physically feeds.
-	 *   does not panic -> "any explicit write is enough", so the mechanism is in
-	 *                    the PWM channel or the pin, not the rail voltage.
+	 * So with the property missing, set_voltage() is never called, and the only
+	 * thing that touches the hardware is rk_pwm_set_enable(), which writes
+	 * ctrl |= 0x3 and leaves period and duty at their reset values. The kernel
+	 * cannot rescue it either: pwm_regulator_init_boot_on() starts with
 	 *
-	 * 950000 is the value that passed six consecutive boots. Revert to it if this
-	 * one behaves worse than that.
+	 *     if (pstate.enabled) return 0;
+	 *
+	 * and enabled is (ctrl & 0x3) == 0x3, which U-Boot just made true. So the
+	 * kernel also writes nothing.
+	 *
+	 * Measured consequence: SDIO phase 269 and intermittent single-bit kernel
+	 * corruption. That line of printf is the cleanest discriminator found in this
+	 * port -- it appears in every 269-phase serial capture and in no other,
+	 * without exception. scripts/classify-serial-logs.sh sorts captures by it.
+	 *
+	 * ⚠️ WHY 950000 AND NOT SOMETHING ELSE
+	 *
+	 * The value is not the fix -- the property's existence is. Measured, at duty
+	 * 0%, 25% and 50%:
+	 *
+	 *     800000  (0%)       6/6 clean   phase 210-213
+	 *     950000  (25%)     12/6 clean   phase 215-226
+	 *     1100000 (50%)      6/6 clean   phase 232-234
+	 *     (absent)                    phase 269 and panics
+	 *
+	 * So any explicit value passes, and the SDIO phase tracks it linearly
+	 * (residual <= 0.1 phase over 30 boots). 950000 is chosen because:
+	 *
+	 *   1. Every RK3399 board file in upstream v2025.10 sets exactly this --
+	 *      rock-pi-4, rock-4c-plus (Radxa's own sister board), rockpro64,
+	 *      firefly, orangepi, khadas-edge, leez-p710, pinebook-pro,
+	 *      puma-haikou, eaidk-610, roc-pc. Not one deviates.
+	 *   2. It has the most measurements: 12 clean boots across two builds.
+	 *   3. Its phase (215-226) brackets Armbian's (220-223), which is where the
+	 *      silicon ends up when someone else's bootloader drives it. 800 mV
+	 *      lands below that band and 1100 mV above it.
+	 *
+	 * ⚠️ 800 mV passing is NOT an argument for 800 mV. This rail is named
+	 * vdd_log; the fact that the bottom of its range is stable says the rail is
+	 * not a critical supply, not that undervolting it is fine.
+	 *
+	 * ⚠️ The rail is still not measured. Nothing has read its actual voltage:
+	 * no multimeter, and regulator_summary reports the requested value, not the
+	 * measured one. "950 mV" here means what the driver is told to program.
 	 */
-	regulator-init-microvolt = <800000>;
+	regulator-init-microvolt = <950000>;
 };

@@ -44,8 +44,9 @@ to speak of. Use something that counts occurrences.
 
 ## Current contents
 
-The build measured on 2026-10-08, which **passed 21/21 post-build checks and six
-consecutive clean boots** with patch `0103` removed:
+The build measured on 2026-10-08, which **passed 21/21 post-build checks** (the count
+at the time; the tree has grown to 24 since) **and six consecutive clean boots** with
+patch `0103` removed:
 
 ```
 idbloader.img                        192512    TPL + SPL, for eMMC boot
@@ -54,6 +55,35 @@ u-boot.itb                          1295360    U-Boot proper
 openwrt-radxa_rock-4b-plus-ext4.img 603979776 full disk image, for Maskrom
 SHA256SUMS.txt
 ```
+
+⚠️ **A fresh build reproduces these artefacts again — as of 2026-10-10 that is
+literally true.** The tree is back on `regulator-init-microvolt = <950000>`, the
+shipping value, after two measurement rounds (800 mV and 1100 mV) that existed only
+to find out what the variable was. **A fresh build's `idbloader.img`,
+`idbloader-spi.img` and `u-boot.itb` are byte-identical to the files here:**
+
+```
+76bf3bcf7be75197  idbloader.img
+62e4142cd70f39bf  idbloader-spi.img
+d466c390c57eaa5d  u-boot.itb          (rkimage at 0x8000: fe4165bea40d399d…)
+```
+
+⚠️ **The disk image still will not match.** This directory holds the uncompressed
+ext4 image written on 10-08; a fresh `build.sh` produces a `.gz` whose contents
+differ because the rootfs is rebuilt. **The bootloader is reproducible; the disk
+image is not.** Verify with `sha256sum -c SHA256SUMS.txt` rather than by comparing
+a fresh build to this directory.
+
+⚠️ The rule below is unchanged and is the reason the distinction above is written
+down: **an artefact set in the tree is a claim; one in here has a measurement
+behind it.** A build that has never been flashed does not become the recovery
+artefact by being reproducible.
+
+⚠️ **So: if you are reaching for a recovery artefact, use the files in this directory,
+not whatever `build.sh` most recently produced.** This directory exists precisely
+because a build in the tree is a claim while a build in here has a measurement behind
+it. When the 800 mV experiment has been run, this directory gets replaced — not
+alongside — by whichever of the two is the last one actually measured.
 
 Verify before using any of it:
 

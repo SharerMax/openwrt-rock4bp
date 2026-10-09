@@ -179,20 +179,26 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   # reverted to a range-only definition would satisfy a weaker "there is a
   # vdd_log" check.
   #
-  # 2026-10-09: temporarily 800000 rather than 950000 (0xE7EF0). The root-cause
-  # analysis predicts 800000 -- duty 0%, the same state
-  # pwm_regulator_init_boot_on() parks the rail in -- will still panic, and that
-  # distinguishes "the rail must actually be driven" from "any explicit write is
-  # enough". This assertion is what makes the change visible in the built dtb
-  # instead of only in the source, so it has to be updated alongside it.
+  # Back to 950000 (0xE7EF0) on 2026-10-10, which is the shipping value, not an
+  # experiment. 800000 and 1100000 were measured only to find out what the
+  # variable was; the answer turned out to be "the value is not the variable,
+  # whether the duty is ever written is". Every RK3399 board file in upstream
+  # v2025.10 sets 950000 -- rock-pi-4, Radxa's own rock-4c-plus, rockpro64 and
+  # eight more, not one deviating -- and 950 mV is also where the phase sits for
+  # Armbian (220-223 against our 215-226). It also has the most measurements
+  # behind it: 12 clean boots across two builds.
   #
-  # ⚠️ 800000 is 0xC3500, NOT 0xC350. I wrote the shorter constant first and the
-  # check failed on a correct build -- the same arithmetic slip this check has
-  # already made once before, when 950000 came out as 0xE8A40 instead of 0xE7EF0.
-  # **A wrong assertion and a broken artefact look identical from the output**,
-  # so the first thing to do on a failure here is read the built dtb.
-  check "u-boot dtb sets vdd_log to 800mV (experiment; 950mV is 0xe7ef0)" \
-    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | tr -d ' \t' | grep -q 'regulator-init-microvolt=<0xc3500>'"
+  # 950000 is 0xE7EF0, 800000 is 0xC3500, 1100000 is 0x10C8E0.
+  #
+  # ⚠️ This assertion has been wrong by hand THREE times: 950000 written as
+  # 0xE8A40, then 800000 as 0xC350 instead of 0xC3500, and the constant above was
+  # computed rather than typed only because of the first two. **A wrong assertion
+  # and a broken artefact look identical from the output**, so on a failure here,
+  # read the compiled dtb before touching the build:
+  #
+  #   $UB/scripts/dtc/dtc -I dtb -O dts $UB/u-boot.dtb | grep regulator-init-microvolt
+  check "u-boot dtb sets vdd_log to 950mV (the shipping value)" \
+    "'$UBDTC' -I dtb -O dts '$UB/u-boot.dtb' 2>/dev/null | tr -d ' \t' | grep -q 'regulator-init-microvolt=<0xe7ef0>'"
 
   check "both idbloader variants built" \
     "[ -s '$UB/idbloader.img' ] && [ -s '$UB/idbloader-spi.img' ]"
