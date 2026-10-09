@@ -124,7 +124,7 @@ For SPI use `../scripts/flash-spi.sh`, which refuses a loader whose name does no
 contain `spinor`. ⚠️ **`--write` has not been run on hardware by this port**, and
 the loader version is unsettled (Radxa ships `spinor v1.15.114` and documents
 that v1.72-and-later boards need `v1.20.126`; this board's revision has not been
-identified). See [docs/boot-order.md](../docs/boot-order.md).
+identified). See [docs/boot-order.md](docs/boot-order.md).
 
 ### The squashfs image is deliberately absent
 

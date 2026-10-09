@@ -12,6 +12,15 @@
 > 而错的机制会让人以为这条路是封死的。新增的一节：
 > [SPI 现在可以写了](#spi-现在可以写了-2026-10-09)。
 
+> ⚠️ **2026-10-10：SPI 一直可见，10-08 记的「不被探测」整段作废。**
+>
+> 同一镜像上实测：`rockchip-spi` 已绑定、`/dev/mtd0` 存在（4 MiB / `spi1.0`）、无 deferred
+> probe、连续三次读 md5 全同。冷启动（`POR`）与热启动**结果一致**。
+>
+> ⚠️ **但「读出来的数据是错的」这条仍然成立**，而且现在有本移植镜像上的实测
+> （整片数据均匀分布、0 个 rkimage/FIT magic）。**别把 SPI 当恢复路径** ——
+> 一个稳定返回错误数据的 `/dev/mtd0` 比没有更危险。
+
 排查过程（含几条走错的岔路）记在
 [postmortem-u-boot-ddr.md](postmortem-u-boot-ddr.md)。本文只讲这三条结论和它们的后果。
 
@@ -125,49 +134,18 @@ TPL/SPL 的可见性，所以之前没人留意它能否引导 —— 但它一�
 
 ---
 
-## ⚠️ 2026-10-08：SPI 现在根本不被探测，和文档里记的不一样
+## ✅ 2026-10-10：SPI 一直可见，10-08 记的「不被探测」是错的
 
-⚠️ **本文后面那一节说 `/dev/mtd0` 出现过、`rockchip-spi` 驱动已绑定。
-今天（10-08）在 OpenWrt 25.12.5 / 6.12.94 上复现不出来 —— 现在压根没有 `/dev/mtd*`。**
-下面先记实测，再解释为什么「记的和测的不一致」这件事本身还没结清。
+⚠️ **本节整段结论作废。** 10-08 记的「OpenWrt 6.12.94 上复现不出 `/dev/mtd*`」**不成立**：
+同一天（10-10）在**同一个镜像**上，SPI 正常绑定、`/dev/mtd0` 存在、读稳定。
+设备树从来是对的，驱动从来是能工作的。
 
-### 实测（板子可达，root，无密码）
+先说清楚为什么会有 10-08 那次记录，再给出现在的实测 —— 保留前者是因为
+**同一台板子、同一份镜像、同一个 BL31 会给出两种相反的观测**，这件事本身还没解释。
 
-```
-/dev/mtd*                    不存在
-/sys/bus/platform/devices/ff1d0000.spi/driver   不存在（未绑定）
-/sys/bus/platform/drivers/   有 rockchip-spi（驱动注册了，但没绑上）
-dmesg: [18.411357] platform ff1d0000.spi: deferred probe pending: (reason unknown)
-```
+### 10-08 那次到底是什么状态
 
-**设备树是对的**，不是节点写错：
-
-```
-spi@ff1d0000   status=okay   children: ... flash@0 ...     ← spi1 在 ff1d0000，enabled
-```
-
-### 机制：一次**静默**的 defer
-
-`drivers/spi/spi-rockchip.c:877`：
-
-```c
-ctlr->dma_tx = dma_request_chan(rs->dev, "tx");
-if (IS_ERR(ctlr->dma_tx)) {
-        if (PTR_ERR(ctlr->dma_tx) == -EPROBE_DEFER) {
-                ret = -EPROBE_DEFER;          /* 直接返回，没有任何 dev_err */
-                goto err_disable_pm_runtime;
-        }
-        dev_warn(rs->dev, "Failed to request TX DMA channel\n");
-```
-
-`dmas` / `dma-names = "tx", "rx"` 是**上游 `rk3399-base.dtsi:865` 就有的**，指向
-`&dmac_peri`（`ff6d0000`，compatible `arm,pl330`）。DMA 通道拿不到就整条 probe 挂起，
-而这条路径**不打日志** —— 所以只有 deferred probe 超时后那句 `(reason unknown)`。
-
-⚠️ **本移植没有引入这个依赖。** `overlay/kernel/rk3399-rock-4b-plus.dts` 的 `&spi1`
-块只写了 `status = "okay"` 和 `flash@0`，没碰 `dmas`。
-
-### 同批挂起的三兄弟
+那一组日志（`log/tty14` … `log/tty17`）确实记录了：
 
 ```
 [18.409961] amba ff6d0000.dma-controller: deferred probe pending: (reason unknown)
@@ -175,65 +153,64 @@ if (IS_ERR(ctlr->dma_tx)) {
 [18.411357] platform ff1d0000.spi:         deferred probe pending: (reason unknown)
 ```
 
-`/sys/bus/amba/devices/` 里两个 PL330 都在，`/sys/bus/amba/drivers/dma-pl330` 也注册了，
-**但都没绑定**。所以 SPI 的挂起是在它们的**下游**，不是并列的三个独立问题。
+机制是清楚且正确的：`spi-rockchip.c` 请求 TX DMA 通道，provider 是上游
+`rk3399-base.dtsi` 里 `dmas` 指向的 `&dmac_peri`（PL330，`arm,pl330`）；
+两个 PL330 自己先因为 amba 层读不到 `PERIPH_ID` 而挂起，SPI 就在它们下游，
+而这条路径**不打任何日志**，所以只剩 deferred probe 超时后的 `(reason unknown)`。
 
-### 内核配置：不是本移植改的
+⚠️ **这部分机制描述仍然有效**，它解释了 10-08 那三行**是怎么产生的**。
+**作废的是「SPI 在 OpenWrt 上不可用」这个结论，不是这段机制。**
+
+### 10-10 实测：SPI 完全正常
+
+三次启动，其中一次是真冷启动（`Reset cause: POR`），另两次 `RST`：
+
+| 日志 | Reset cause | PL330 | deferred | `/dev/mtd0` |
+|---|---|---|---|---|
+| `log/cold1` | **POR** | ✅ 加载 | 无 | ✅ |
+| `log/warm1` | RST | ✅ 加载 | 无 | ✅ |
+| `log/warm2` | RST | ✅ 加载 | 无 | （日志截断，未跑到 `ls /dev/`） |
+
+板上实测（`root@192.168.3.8`，身份已正向核对）：
 
 ```
-CONFIG_SPI_ROCKCHIP=y
-CONFIG_PL330_DMA=y                 → drivers/dma/pl330.o 已编译
-# CONFIG_AMBA_PL08X is not set
+/sys/bus/platform/devices/ff1d0000.spi/driver -> .../drivers/rockchip-spi   ← 已绑定
+/proc/mtd:  mtd0: 00400000 00001000 "spi1.0"
+/sys/class/mtd/mtd0/:  type=nor  size=4194304  erasesize=4096
+dmesg | grep -i deferred      → 无
 ```
 
-`amba-pl08x.c` 没有被编进去，但 `pl330.c` 编了 —— **两条路径都能驱动 `arm,pl330`，
-所以缺 `AMBA_PL08X` 本身不是原因。**
+### ⚠️ 我提的一个假设，实验当天就被否掉了
 
-⚠️ 而 `0101-configs-add-rock-4b-plus-rk3399-defconfig.patch` 里的 `CONFIG_*`
-**全是 U-Boot 的**（`CONFIG_SYS_LOAD_ADDR`、`CONFIG_DEBUG_UART_BASE`……）。
-**本移植没有改过内核配置**，所以上面的组合完全来自 OpenWrt 上游的 rockchip config。
+10-08 那批日志里 PL330 全部挂起，而更早的日志（tty2–tty13、tty18）里同一个镜像
+**全部正常加载**。BL31、U-Boot、内核三者都逐字节相同，所以「静态配置导致」解释不了。
 
-### ⚠️ 未结清：文档里那次 `/dev/mtd0` 到底是在哪套系统上测的
+我提的假设是：mainline TF-A 不配置 DMAC 的 SGRF 安全位（已核对 TF-A
+`plat/rockchip/rk3399/drivers/secure/secure.c`，`secure_sgrf_init()` 只写
+`SGRF_SOC_CON(5)(6)(7)`，没有 DMAC），因此 `PERIPH_ID` 从非安全世界读回 0；
+而 SGRF 的值**跨热复位保留**，所以跑过 Armbian（rkbin BL31 会写这些位）之后
+热启动就正常，冷启动则挂起。
 
-本文后面那节写「两套完全不同的内核（6.12 与 6.18）都读不对」，言下之意 6.12 那边
-`mtd0` 是存在的。**今天的 6.12.94 复现不出来。**
+**判别设计**：冷启动应 DEFER、热启动应 PL330-OK。
 
-两种可能，我还没有证据分辨：
+**实测结果：冷启动（POR）和两次热启动全部 PL330-OK。预测在第一次实验就被否掉。**
 
-| | 说法 | 需要什么才能定 |
-|---|---|---|
-| A | 当时那次其实是在 **Armbian** 上测的，文档把两套系统的结果混成了一句 | 回看当时的命令与输出 |
-| B | OpenWrt 6.12 **确实**曾经探测成功，后来某次重建改了 config 或 DTS | 逐版本二分构建 |
+⚠️ 所以**「冷/热」这个变量与它无关**，「跨复位保留的状态」这个解释作废。
+RK3399 + mainline TF-A 上 PL330 读不到 `PERIPH_ID` 的问题在社区是已知的
+（linux-arm-kernel 2023-04 与 Armbian build#9285），**但那不是这里的机制** ——
+因为这里同一份 TF-A 下它大部分时候是好的。
 
-⚠️ **所以「SPI 曾经可见」这个前提，目前是不成立的。** 后面那节的结论
-（读出来的数据是错的、不能拿来做备份）**仍然有效** —— 但它是在「能读到」的前提下得出的，
-而今天连「能读到」都不成立了。**两层都要修，不能只认一层。**
+⚠️ **未结清**：同一镜像、同一 TF-A 下，`tty14`–`tty17` 挂起而其它日志正常。
+本节记不下这个差别来自哪里，需要比对那几次的构建差异才能定论。
+**不要再把它记成「SPI 不可用」** —— 那是 10-08 的一次观测，不是结论。
 
-### 如果要修，最小改动是去掉 `dmas`
+### 因此：不需要「去掉 `dmas`」这个改动
 
-SPI 用 PIO 完全能工作，DMA 只是加速。所以在本移植的 `&spi1` 块里：
+10-08 曾经建议在 `&spi1` 里 `/delete-property/ dmas; dma-names;` 退回 PIO 以绕过
+静默挂起。**现在不需要** —— SPI 本来就能工作，而且它用的是 DMA（PL330 已加载）。
 
-```dts
-&spi1 {
-	status = "okay";
-	/delete-property/ dmas;
-	/delete-property/ dma-names;
-
-	flash@0 { ... };
-};
-```
-
-没有 `dmas` 时 `dma_request_chan()` 拿不到 provider 会返回 `-ENODEV` 而不是
-`-EPROBE_DEFER`，`spi-rockchip` 会打一条 `Failed to request TX DMA channel` 警告
-然后**继续用 PIO** —— 也就是绕开这条静默挂起的路径，而不是再加一层猜测。
-
-⚠️ **⚠️ 但先别急着改。** 本文的结论是：**这块 SPI 就算探测成功，读出来的也是错的**
-（0 个 FDT magic、0 条 U-Boot 字符串、整片数据与芯片内容不符）。
-**一个会给出错误数据的 `/dev/mtd0` 比没有更危险** —— 它能通过「读稳定吗」这类检查，
-备份下来的却不是芯片内容。
-
-所以顺序应该是：先把 PL330 那条挂起链查清楚（为什么两个 DMA 控制器也不绑），
-再决定是恢复 DMA 还是退到 PIO。**直接改 SPI 只会把「静默失败」换成「静默给出错误数据」。**
+⚠️ **但即使 SPI 可见，它读出来的数据仍然是错的**，见下一节。
+**这是唯一还没解决的问题，也是唯一还有现实意义的问题。**
 
 ---
 
@@ -276,6 +253,58 @@ dump contains d00dfeed         : no
 **JEDEC ID 这类短事务读对了**（所以 4 MiB / 4 KiB 的几何信息合理），
 **批量数据读全是错的**。
 
+### ✅ 2026-10-10 复测：OpenWrt 6.12.94 上同样读不对，且错法更清楚
+
+⚠️ **本节结论此前只有 Armbian 6.18 的证据**（见下文两节），而 OpenWrt 侧当时连
+`/dev/mtd0` 都复现不出来，所以一直没机会测。现在 SPI 确认可用（见上一节），
+在**本移植自己的镜像**上重测，结论不变，且多出一条更直接的判据。
+
+**读稳定 —— 完全稳定：**
+
+```
+三次独立读 /dev/mtd0（全片 4 MiB）：
+  read1: 9346c99ff025fe0d9d814842d97cebbd
+  read2: 9346c99ff025fe0d9d814842d97cebbd
+  read3: 9346c99ff025fe0d9d814842d97cebbd
+块大小 65536 与 4096 各一次，md5 相同
+```
+
+**内容 —— 仍然不对，而且错法有明确特征：**
+
+```
+strings -n 12   -> 149 条   ← 有真实 U-Boot 符号（rk3399_spi_set_clk、efi_free_pool、
+                              write_sparse_image、NXP i.MX8M Boot Image…）
+rkimage 3b8cdcfcbe9f9d51 -> 0 处
+FIT     d00dfeed         -> 0 处
+U-Boot 版本串（20xx）     -> 0 条
+```
+
+⚠️ **最有说服力的一条：整片 4 MiB 的数据分布。** 真实的 bootloader + 已擦除的空白区，
+应该是「头部集中有数据、后部全 `0xFF`」。实测按 512 KiB 分块统计**非 `0xFF` 字节数**：
+
+```
+0x000000   151138
+0x080000    35109
+0x100000    45016
+0x180000    52445
+0x200000    55948
+0x280000    55194
+0x300000    60675
+0x380000    54755      ← 末尾仍有 5 万多非 FF 字节
+```
+
+**从头到尾一个量级，均匀分布。** 末尾那块本该是擦除后的空白区，却和头部一样「满」。
+
+⚠️ 这解释了 10-08 那次 Armbian 观测的「两次读 md5 不同」：读到的根本不是芯片内容，
+所以「稳不稳定」这个问题问错了对象 —— **10-10 的三次 md5 完全相同，但错得同样完全相同。**
+
+与 eMMC 对照（eMMC 已知正确）：
+
+```
+eMMC 0x8000 引导程序区  vs  SPI 0x8000 区   ->  首字节即不同
+md5: eMMC 39f061e3…  /  SPI 56ee49b3…
+```
+
 ### 为什么这比"读不稳"更危险
 
 因为它**能通过任何"读是否稳定"的检查**。一个确定性失败返回每次都一样的错误数据，于是：
@@ -295,6 +324,11 @@ dump contains d00dfeed         : no
    `/sbin/mtd`。
 
 **要改 SPI 上的引导程序，只有 Maskrom 这一条路。**
+
+⚠️ **2026-10-10 强调：以上全部与「SPI 是否可见」无关。** SPI 现在是可见的、
+`/dev/mtd0` 是可读的 —— 而正因为它可读且**读得稳**，才更容易被误当成备份路径。
+第 1 条现在有本移植镜像上的实测支撑（见上一节的三次 md5 与数据分布）。
+**一个稳定返回错误数据的 `/dev/mtd0` 比没有更危险**：它能通过任何稳定性检查。
 
 ### 2026-10-07 复盘：不是"读错"，是**读到了别的东西**
 

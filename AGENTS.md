@@ -378,6 +378,15 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
   a separate `u-boot.itb`.
 - Linux cannot read this SPI flash correctly. It is deterministic, repeatable, and wrong.
   Do not attempt to back up or write the SPI from a running system — see the post-mortem.
+- **SPI visibility is not the problem, and never was.** On 2026-10-10 the port's own
+  image showed `rockchip-spi` bound, `/dev/mtd0` = 4 MiB `spi1.0`, no deferred probe, and
+  three identical read checksums — **cold boot (`Reset cause: POR`) and warm boots all
+  identical**. The 2026-10-08 note claiming `/dev/mtd*` could not be reproduced was a
+  single observation, not a finding, and is retracted. The `dmas` → PL330 defer chain in
+  `docs/boot-order.md` explains how those three log lines arise; it is **not** this port's
+  normal state. ⚠️ Why `log/tty14`–`tty17` defer while `tty2`–`tty13`/`tty18` do not, on
+  byte-identical firmware, is **still unexplained** — do not re-record it as "SPI is
+  unavailable".
 - HDMI and audio are out of scope: no `CONFIG_DRM` / `CONFIG_SND`, and OpenWrt 25.12.5
   ships no matching kmod packages.
 
