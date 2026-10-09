@@ -221,7 +221,6 @@
 > 只能说前者更接近能工作的那个。
 >
 > ### ✅ 6 次全部干净 —— **达到本仓库定下的判据**
-> ### ✅ 6 次全部干净 —— **达到本仓库定下的判据**
 >
 > | # | 来源 | 相位 | 挂上 root |
 > |---|---|---|---|
@@ -266,10 +265,14 @@
 > - **Armbian 的参数与我们不同** —— banner 带 `armbian` 补丁后缀，它自己打的补丁
 >   不在我们手上。**能恢复的是 mainline v2022.07 的顺序，不是 Armbian 的实际行为。**
 >
-> **下一步**：① Maskrom 刷入实验二的镜像，跑 6 次（判据：6 次连续零 panic，
-> 一次不算）→ ② 拿 Armbian 真正的 `u-boot.itb`/`idbloader.img` 做语义级设备树比对 →
-> ③ 若有实物 TTL 适配器接 UART2，价值最大 —— 现在缺的是 TPL/SPL 自己的输出。
-> 详见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
+⚠️ **本节末尾原来写着「下一步：刷入实验二的镜像，跑 6 次」—— 那是 10-08 的待办，
+早就做完了。** ① 就是下面那张「6 次全部干净」的表；③ 串口也已经在 10-10 接上了，
+TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没有必要做 ——
+`u-boot.itb` 已经直接读过了。
+
+⚠️ **这一节整段读下来像是「还在排查」，但它是历史记录。** 结论在顶部状态节；
+下文按时间顺序保留了每一步，包括**被推翻的那些**。
+详见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
 >
 ---
 
@@ -299,9 +302,9 @@
 以下每一行的证据都来自**板子实测**（OpenWrt 25.12.5 / Linux 6.12.94，2026-10-06/08 复核）。
 凡是没有在真机上跑过的，都不在这个表里。
 
-⚠️ **本移植的引导程序有随机 panic 的问题**（base 版 6 次启动 3 次崩），所以下面"启动"和
-"eMMC 引导"两行的证据都注明了是由**哪一次**运行给出的。用 Armbian 的引导程序启动
-稳定，用本移植的那份不稳定 —— 详见顶部状态节。
+⚠️ **两行的证据注明了是由哪一次运行给出的**，因为它们**不是同一个问题**：
+「base 引导程序」那行是不稳定的、被取代的历史数据（6 次 3 panic）；
+「当前引导程序」那行是 24 次零 panic。⚠️ **别把前者当现状** —— 顶部状态节记的是后者。
 
 | 外设 | 状态 | 关键证据 |
 |---|---|---|
@@ -323,7 +326,7 @@
 | **Maskrom 恢复** | ✅ | 官方 `rk3399_loader` + Armbian 引导程序救回过一次起不来的板子 |
 | **Maskrom 写 eMMC** | ✅ | `rkdeveloptool db loader` + `wl 0 <整包>` 写入成功，板子从 eMMC 引导 |
 | **Maskrom 写 SPI** | ⚠️ **未上机** | payload 已就绪并断言通过（`u-boot-rockchip-spi.bin`），但要换 **spinor** loader 且版本未定。⚠️ 此前文档说「Maskrom 写不了 SPI」——**观察对、机制错**，`wl` 不选介质，loader 选。见 [docs/boot-order.md](docs/boot-order.md) |
-| **DRAM 参数（`rockchip,sdram-params`）** | ✅ **已修且生效** | TPL 打出 `lpddr4_set_rate` + 两通道各 `Size=2048MB`（2026-10-06）。⚠️ 但**同一份 TPL 会导致随机 panic**，见顶部状态节 |
+| **DRAM 参数（`rockchip,sdram-params`）** | ✅ **已修且生效** | TPL 打出 `lpddr4_set_rate` + 两通道各 `Size=2048MB`（2026-10-06）。⚠️ 曾有一段时间怀疑随机 panic 也出自这里 —— **已排除**：补丁 `0103` 按 Armbian 的顺序改回来，2 次启动 2 次 panic，故障不变 |
 
 ### 主动划出范围
 
@@ -339,32 +342,59 @@
 
 ## 还剩什么
 
-**本移植 U-Boot 的随机 panic 是唯一还没解决的问题**，而且它比别的都重要 ——
-引导程序不稳定意味着镜像不能算可交付。
+> ⚠️ **本节在 10-10 之前是错的，而且错在最显眼的位置。** 它当时写着随机 panic
+> 「是唯一还没解决的问题」「为什么仍未定位」「下一步是把 LPDDR4 升频挪回去重建」。
+> **三句都不成立了**：根因已定位并实测确认（见顶部状态节），而那个升频顺序
+> 补丁 `0103` 早已删除 —— 它 2 次启动 2 次 panic，**没有修好任何东西**，
+> 正是它的失败才把 DRAM 初始化排除掉。
 
-**对照组已经补齐**（10-08）：两列都从 eMMC 引导，Armbian 7 次零 panic、本移植 6 次
-3 panic，**唯一变量是引导程序本身**。所以"是本移植引导程序的问题"现在有证据了。
+**没有未解决的稳定性问题。** 本移植引导程序 **24 次零 panic**（四个构建各 6 次），
+交付构建的 `idbloader` / `u-boot.itb` 与背后有 12 次零 panic 的那份**逐字节相同**。
 
-⚠️ **但"为什么"仍未定位。** DRAM 参数、DRAM 的 CONFIG、板级 dtsi 已确认与 Armbian
-逐字节相同，唯一找到的差异是 **LPDDR4 升频与训练的时机**（新增一次 PHY 配置 + 训练，
-跑在配置写入之前）。下一步是把它挪回去重建，跑 6 次 —— 这是改上游代码，必须可回退。
-详见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md)。
+### 真正还剩下的
+
+| | 是什么 | 卡在哪 |
+|---|---|---|
+| **物理那一环** | 这条轨在 4B+ 上实际接到哪里、未编程时输出什么电压 | ⚠️ **不是修复卡住，是解释卡住。** 设备树不描述板子真实连线，`supply_map` 里也没有消费者，**没有任何东西测过那条轨的电压**（`regulator_summary` 报的是请求值）。需要万用表 |
+| **上游 PR** | Linux 主线 DTS + OpenWrt 设备支持 | ⚠️ **门槛是复现，不是稳定性。** 别人无法验证这条轨在他们板子上是否同样未编程，所以说不清那行 `regulator-init-microvolt` 是否必需 —— 而现在已经证明**换成任何显式值都能过**，所以「必需」这件事本身没有证据 |
+| **`flash-spi.sh --write`** | Maskrom 写 SPI | ⚠️ **一次都没在硬件上跑过**。payload 已就绪且断言通过，但 spinor loader 版本未定（Radxa 发 `v1.15.114`，文档说 v1.72 以后的板要 `v1.20.126`，而这块板的版本没查明） |
+| **HDMI / 音频** | 主动划出范围 | 需新建 1 + 2 个 kmod 包，都不阻塞使用 |
+| **`/tmp` 里的验收日志** | ⚠️ **两次 950mV 的矩阵原始日志已被清掉**，只剩结论 | 不影响交付（能复查的 800mV/1100mV 各 6 次证明同一机制），但那 12 次现在没有可复查凭据。见 [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md) |
 
 **eMMC 安装**已验证（Maskrom 写整包 tty8 挂上 root；Armbian 从 eMMC 引导 7 次零 panic），
 `dd` 流程另见 [docs/flashing.md](docs/flashing.md)。
 
-⚠️ **eMMC 上现在是 Armbian**（2026-10-08 重装，单个 28.6 GB ext4，
-`root=UUID=7043da66-…`），**不是** OpenWrt 镜像。本文上面几处写"eMMC 上是 OpenWrt
-镜像"的记录描述的是 10-06 那天的状态，已过时 —— 变迁见
-[docs/hardware.md](docs/hardware.md#emmc-状态的变迁实测)。
+### 板子当前状态
 
-板子当前可达 **`192.168.3.8`，`root`，无密码** —— eMMC 上现在是本移植的 OpenWrt
-镜像（不是 Armbian）。⚠️ 地址和密码都变过：Armbian 时期是 `.184` / `armbian`，
-写 OpenWrt 整包之后 DHCP 给了 `.8`，且新系统首次启动生成了新的 host key。
-**旧 host key 指纹 `SHA256:bkOdpYyr9UyIDOegCfoiUWODxIED3JB6zD7grt2jFIM`
-（已归档到 `~/.ssh/known_hosts.retired`），新的是
-`SHA256:qgJ+OCni5jPRbNeEMxzKRAyFW+3TZdzzZHed/xXvUnE`。**
-host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking=no`。
+⚠️ **eMMC 上现在是本移植的 OpenWrt 镜像**（最后刷入的是 `800mV` 构建，
+`u-boot.itb` `5f29e96e…`，10-09 23:07 测完 6/6）。**不是 Armbian。**
+
+⚠️ **这一节以前自相矛盾过**：一段写「eMMC 上是 Armbian（10-08 重装）」，
+两段后写「现在是本移植的 OpenWrt 镜像（不是 Armbian）」，两句都在。
+上面那句才是 10-09 之后的实况；10-08 那句描述的是 Armbian 时期，已过时。
+完整变迁见 [docs/hardware.md](docs/hardware.md#emmc-状态的变迁实测)。
+
+⚠️ **交付构建（`950mV`）还没上机** —— 板上是 `800mV`。两者引导程序不同
+（`d466c390…` vs `5f29e96e…`），但**价值只差在「写进去了哪个值」，
+而三个值各 6 次都干净**，所以这不构成交付障碍。
+
+板子当前可达 **`192.168.3.8`，`root`，无密码**，MAC `e6:d8:f2:44:0b:9f`。
+⚠️ 地址和 host key 变过很多次：
+
+| 时期 | 地址 / 密码 | host key 指纹 |
+|---|---|---|
+| Armbian | `.184` / `armbian` | `SHA256:bkOdpYyr9UyIDOegCfoiUWODxIED3JB6zD7grt2jFIM` |
+| 10-08 首个 OpenWrt 整包 | `.8` / 无密码 | `SHA256:qgJ+OCni5jPRbNeEMxzKRAyFW+3TZdzzZHed/xXvUnE` |
+| `800mV` 构建 | `.8` | `SHA256:6mA3NqGTliBa31QX1tQgZK286lFFFRUlzupeJJWvC5g` |
+| **当前（`1100mV` 构建）** | `.8` | **`SHA256:ljp6cQjuH1fbED6oBIpspb0V35USAr7G4dLYmQG/6Yw`** |
+
+⚠️ **host key 每次整包重写都会变**，所以它不是身份判据。**先查 MAC**
+（`e6:d8:f2:44:0b:9f`），再谈连不连。
+
+⚠️ **本文原来写「旧 key 已归档到 `~/.ssh/known_hosts.retired`」，那现在只对一半** ——
+那个文件里目前只有 `800mV` 那一条，`qgJ+OCni`（10-08 那次）**已经不在任何地方**。
+退役的做法本身是对的（移动而不是删除），只是中间有一次用了
+`ssh-keygen -R` 没先备份。
 
 ---
 
@@ -467,15 +497,6 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
       残差 ≤ 0.1 phase / 30 次启动。**这条轨确实在移动 SDIO 时序余量**。
       ⚠️ **269 不在这条曲线上** —— 反推需 1620 mV，超出上限 220 mV，
       所以修复前的状态**不是这条轨上的任何电压**，「停在 0%」彻底否掉
-- [x] Phase 5u：**改回 `950000` 并重建**（10-10）—— 交付值，**不是实验值**。
-      理由：上游 v2025.10 **全部 14 个 RK3399 板级文件都是 950000**（`rock-pi-4`、
-      Radxa 自家 `rock-4c-plus`、`rockpro64` 等，**一个偏离都没有**），而原始 tarball 里
-      **没有** `rk3399-rock-4b-plus-u-boot.dtsi` —— 所以本移植是**新建**这个文件。
-      且 950mV 的相位（215–226）正好套住 Armbian 的（220–223），另外三个值都落在外面。
-      ⚠️ **800mV 通过不等于 800mV 正确** —— 轨叫 `vdd_log`，区间下限能跑只说明它不是
-      关键供电，不是欠压没关系。24 项校验全过。
-      ✅ 新构建的 `idbloader` / `idbloader-spi` / `u-boot.itb` 与 `recovery/` 里那份
-      **逐字节相同** —— 也就是**与背后有 12 次零 panic 的那个构建是同一个引导程序**
 - [x] Phase 5t：**串口读寄存器，因果链实测闭合**（10-10）—— 在 U-Boot 提示符
       `md 0xff420020 4` 得到 `period=1207` `duty=603`（**49.96%**）`ctrl=0x13`，
       正是 `1100000` 的占空比 → **U-Boot 自己写的**。
@@ -486,10 +507,23 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
       🔬 而「修复前」的判据早就在 `log/` 里：`Cannot find regulator pwm
       init_voltage` **只出现在 269 的抓取里，一次不差**。据此新增
       [`scripts/classify-serial-logs.sh`](scripts/classify-serial-logs.sh)
+- [x] Phase 5u：**改回 `950000` 并重建**（10-10）—— 交付值，**不是实验值**。
+      理由：上游 v2025.10 **全部 14 个 RK3399 板级文件都是 950000**（`rock-pi-4`、
+      Radxa 自家 `rock-4c-plus`、`rockpro64` 等，**一个偏离都没有**），而原始 tarball 里
+      **没有** `rk3399-rock-4b-plus-u-boot.dtsi` —— 所以本移植是**新建**这个文件。
+      且 950mV 的相位（215–226）正好套住 Armbian 的（220–223），另外三个值都落在外面。
+      ⚠️ **800mV 通过不等于 800mV 正确** —— 轨叫 `vdd_log`，区间下限能跑只说明它不是
+      关键供电，不是欠压没关系。24 项校验全过。
+      ✅ 新构建的 `idbloader` / `idbloader-spi` / `u-boot.itb` 与 `recovery/` 里那份
+      **逐字节相同** —— 也就是**与背后有 12 次零 panic 的那个构建是同一个引导程序**
+
 - [ ] Phase 5e：HDMI 视频（需新建 `kmod-drm-rockchip`）
 - [ ] Phase 5f：音频（需新建两个 kmod 包）
 - [ ] Phase 7：上游 PR（Linux 主线 DTS + OpenWrt 设备支持，DTS 已符合上游风格）
-      ⚠️ **在 DRAM 问题解决之前不要提** —— 提交一个引导不稳定的移植不合适
+      ⚠️ **门槛换了**：现在卡住的不是稳定性，而是**复现** —— 别人无法验证这条轨在
+      他们的板子上是否同样未编程（设备树不描述真实连线），所以说不清那行
+      `regulator-init-microvolt` 是否必需。⚠️ 另外 `flash-spi.sh --write` 至今
+      没上过硬件，那个 PR 里会有一个未经实测的脚本
 
 ---
 
@@ -529,6 +563,11 @@ host key 变了先确认是不是重装系统，别直接 `StrictHostKeyChecking
     只因为被检查的最后一个文件恰好是匹配的那个。负控制要挑**中间**那个文件做。
 11. **危险路径要能只读地跑一遍。** 管理员门禁会把写盘那段挡在评审之外，于是
     `write-idbloader-sd.ps1` 里的两个 bug 一直没人看见。加 `-Preview` 之后两分钟就暴露。
-12. **文档会过期，而且过期得比人记得快。** 本次复核发现 WiFi 章节还在写修复前的"芯片不肯
+12. **文档会过期，而且过期得比人记得快。** 复核时发现 WiFi 章节还在写修复前的"芯片不肯
     运行固件"（与同文件另两处直接矛盾）、eMMC 章节还在描述一个早已被覆盖的布局、校验项
-    数量停在 16（实际 17）。**每次动真机就该顺手复核相关段落。**
+    数量停在 16（当时实际 17）。**每次动真机就该顺手复核相关段落。**
+    ⚠️ **而"还剩什么"那一节骗得最久**：根因 10-10 就定位完了，它还在写
+    「唯一还没解决的问题」「为什么仍未定位」「下一步是把它挪回去重建」，
+    并且**同一节里自相矛盾** —— 一段说 eMMC 上是 Armbian，两段后说
+    「现在是本移植的 OpenWrt 镜像（不是 Armbian）」。**同一节里两次陈述互相打架，
+    是过期最可靠的信号。**
