@@ -171,10 +171,11 @@
 	 * So any explicit value passes, and the SDIO phase tracks it linearly
 	 * (residual <= 0.1 phase over 30 boots). 950000 is chosen because:
 	 *
-	 *   1. Every RK3399 board file in upstream v2025.10 sets exactly this --
-	 *      rock-pi-4, rock-4c-plus (Radxa's own sister board), rockpro64,
-	 *      firefly, orangepi, khadas-edge, leez-p710, pinebook-pro,
-	 *      puma-haikou, eaidk-610, roc-pc. Not one deviates.
+	 *   1. Of upstream v2025.10's 32 RK3399 board -u-boot.dtsi files, the 11
+	 *      that set this property all set it to exactly this value: rock-pi-4,
+	 *      rock-4c-plus (Radxa's own sister board), rockpro64, firefly,
+	 *      orangepi, khadas-edge, leez-p710, pinebook-pro, puma-haikou,
+	 *      eaidk-610, roc-pc. None deviates; the other 21 do not set it at all.
 	 *   2. It has the most measurements: 12 clean boots across two builds.
 	 *   3. Its phase (215-226) brackets Armbian's (220-223), which is where the
 	 *      silicon ends up when someone else's bootloader drives it. 800 mV

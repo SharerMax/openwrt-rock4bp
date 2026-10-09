@@ -60,7 +60,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   package/boot/uboot-rockchip/Makefile             +8 行：U-Boot 变体 + UBOOT_TARGETS
   package/boot/uboot-rockchip/Makefile.orig        上游基线（故意不同步）
   package/firmware/broadcom-nonfree/Makefile       新增：BCM43456 固件包
-  kernel/rk3399-rock-4b-plus.dts                   130 行 delta，继承上游两个 dtsi
+  kernel/rk3399-rock-4b-plus.dts                   205 行，实际代码 58 行，继承上游两个 dtsi
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/

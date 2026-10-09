@@ -420,7 +420,11 @@ Rules that are easy to get wrong:
 | `check-patch-sources.sh` | Check each patch source against the patch it generates |
 | `check-doc-links.py` | Check every relative markdown link resolves, including `#anchor` headings |
 | `check-reboot-matrix.sh` | Reboot the board N times and judge each boot; needs no serial console |
+| `check-reboot-matrix-selftest.sh` | Negative controls for the above — 7 cases, run it first. ⚠️ it only catches what it covers |
 | `classify-serial-logs.sh` | Sort serial captures by the U-Boot `Cannot find regulator pwm init_voltage` line and the SDIO phase |
+| `extract-patch-file.sh` | Pull one file out of a patch, for reading what a patch actually changes |
+| `extract-debian-43456.sh` | Pull the 43456 firmware blob out of an Armbian package |
+| `extract-synaptics-license.py` | Pull the licence text out of a Synaptics package for `extract-debian-43456.sh` |
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
 | `assert-sdram-params-in-image.py` | Assert the RK3399 DRAM parameters are in the image |
 | `deploy.sh` | Write the image to USB / SD / eMMC |

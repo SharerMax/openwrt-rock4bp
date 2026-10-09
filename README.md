@@ -1,7 +1,7 @@
 # OpenWrt 25.12.5 → Radxa ROCK (Pi) 4B Plus
 
 分支 `radxa-rock-4b-plus`，基线 `v25.12.5`。移植层仓库 —— OpenWrt 树在构建机
-`hyv-ub24:/home/max/Code/openwrt`。⚠️ 本移植的设备树**继承上游**，只写 130 行 delta。
+`hyv-ub24:/home/max/Code/openwrt`。本移植的设备树**继承上游**，实际代码只有 **58 行**（文件共 205 行，其余是注释，说明每一行为什么在那儿）
 
 **未推送到任何上游 remote。**
 
@@ -449,7 +449,7 @@ TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没
 - [x] remote 修正（gitee 停更 → 官方源）
 - [x] 基线锁定 tag `v25.12.5`，新建分支
 - [x] Phase 1：`armv8.mk` 新增 `radxa_rock-4b-plus`
-- [x] Phase 2：**DTS 改为继承上游两个 dtsi**（当前 130 行 delta）
+- [x] Phase 2：**DTS 改为继承上游两个 dtsi**（当前 205 行、实际代码 58 行）
 - [x] Phase 3：U-Boot 变体 + defconfig + DTS 复制进 `dts/upstream`
 - [x] 补丁在 6.12.94 上干净应用（零 `.rej`）
 - [x] Phase 4：**上机验证通过，系统完整启动**（1Gbps 网口 + eMMC HS400 + USB）
@@ -508,8 +508,9 @@ TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没
       init_voltage` **只出现在 269 的抓取里，一次不差**。据此新增
       [`scripts/classify-serial-logs.sh`](scripts/classify-serial-logs.sh)
 - [x] Phase 5u：**改回 `950000` 并重建**（10-10）—— 交付值，**不是实验值**。
-      理由：上游 v2025.10 **全部 14 个 RK3399 板级文件都是 950000**（`rock-pi-4`、
-      Radxa 自家 `rock-4c-plus`、`rockpro64` 等，**一个偏离都没有**），而原始 tarball 里
+      理由：上游 v2025.10 的 32 个 RK3399 板级 `-u-boot.dtsi` 里，**11 个设了这一项，
+      全部是 950000，零例外**（`rock-pi-4`、Radxa 自家 `rock-4c-plus`、`rockpro64`
+      等；其余 21 个根本没设这一项），而原始 tarball 里
       **没有** `rk3399-rock-4b-plus-u-boot.dtsi` —— 所以本移植是**新建**这个文件。
       且 950mV 的相位（215–226）正好套住 Armbian 的（220–223），另外三个值都落在外面。
       ⚠️ **800mV 通过不等于 800mV 正确** —— 轨叫 `vdd_log`，区间下限能跑只说明它不是
