@@ -166,7 +166,9 @@ fi
 # ---------------------------------------------------------------------------
 say "payload padding"
 PAYLOAD="$(mktemp /tmp/spi-payload.XXXXXX.bin)"
-trap 'rm -f "$PAYLOAD"' EXIT INT TERM
+READBACK=""
+cleanup () { rm -f "$PAYLOAD"; [ -n "$READBACK" ] && rm -f "$READBACK"; return 0; }
+trap cleanup EXIT INT TERM
 python3 - "$PAYLOAD" "$SPI_IMG" "$FLASH_BYTES" <<'PY'
 import sys
 out, src, total = sys.argv[1], sys.argv[2], int(sys.argv[3], 0)
@@ -231,7 +233,10 @@ CMD=(rkdeveloptool ld)
 say "what would run"
 printf '  %s\n' "${CMD[*]}"
 printf '  rkdeveloptool db %s\n' "${LOADER:-<loader>}"
+printf '  rkdeveloptool cs 9                        # select SPINOR, expect "Change Storage OK"\n'
 printf '  rkdeveloptool wl 0 %s\n' "$PAYLOAD"
+printf '  rkdeveloptool rl 0 %s <file>              # read back and compare\n' \
+	"$(( $(stat -c%s "$SPI_IMG") / 512 ))"
 printf '  rkdeveloptool rd\n'
 
 if [ "$MODE" != write ]; then
@@ -257,24 +262,93 @@ read -r CONFIRM
 
 rkdeveloptool ld
 rkdeveloptool db "$LOADER"
-# The offset is 0. It is 0 because the spinor loader's LBA space is the flash
-# itself; the eMMC offset for the same file would be 0x40. Getting this wrong in
-# the other direction is the other silent failure, hence the comment.
+
+# ⚠️ Confirm the medium BEFORE writing. rkdeveloptool tracks the current storage
+# and can be told to switch it: `cs [1=EMMC, 2=SD, 9=SPINOR]`. Two reasons this is
+# worth doing rather than trusting the loader choice:
+#
+#   - `cs` reads the current storage back and fails if the switch did not take,
+#     so this turns "which medium am I pointed at" from an assumption into a
+#     checked fact. Assuming it is exactly the failure this script exists to stop.
+#   - it is also the fallback if the spinor loader turns out to be the wrong one
+#     for this board revision: push the ordinary eMMC loader and switch with
+#     `cs 9`. Two routes to SPI, so a wrong loader guess is not a dead end.
+#
+# "Change Storage OK" is the pass condition. "Storage 9 is not available" means
+# the device did not accept the switch -- do not write, it would land on eMMC.
+printf '\nselecting SPINOR (cs 9); expect "Change Storage OK"\n'
+if ! rkdeveloptool cs 9; then
+	die "could not select SPINOR -- NOT writing.
+  wl would have gone to whatever storage was already selected, which is the
+  silent failure this script exists to prevent. Aborting before any write."
+fi
+
+# The offset is 0. It is 0 because the LBA space of the selected storage is the
+# flash itself; for eMMC the same file would go to 0x40. Getting this wrong in the
+# other direction is the other silent failure, hence the comment.
 rkdeveloptool wl 0 "$PAYLOAD"
+
+# ---------------------------------------------------------------------------
+# Read back and compare. Do not skip this.
+#
+# `rl` goes through the ROM loader, not through Linux, so it does not have the
+# defective SPI read path that docs/boot-order.md documents: Linux gives two
+# different md5 sums for two consecutive reads of the same 64 KiB. rkdeveloptool
+# is therefore the first read of this chip that can be trusted as ground truth,
+# and "wl exited 0" is not evidence that anything landed.
+#
+# Compared over the payload only, not the whole 4 MiB: the tail is 0xFF padding
+# and an erased cell also reads 0xFF, so including it cannot catch anything while
+# making the comparison depend on how the chip powers up.
+# ---------------------------------------------------------------------------
+say "reading back"
+READBACK="$(mktemp /tmp/spi-readback.XXXXXX.bin)"
+PAYLOAD_SECTORS=$(( $(stat -c%s "$SPI_IMG") / 512 ))
+
+if rkdeveloptool rl 0 "$PAYLOAD_SECTORS" "$READBACK"; then
+	if cmp -s "$READBACK" "$SPI_IMG"; then
+		printf 'readback matches (%s bytes) -- the write landed\n' "$(stat -c%s "$READBACK")"
+	else
+		warn "readback DIFFERS from the image that was sent."
+		cat >&2 <<EOF
+
+  The write reported success but the chip does not contain those bytes. Do not
+  assume the medium was SPI -- check it:
+
+    rkdeveloptool cs 9      # 'Change Storage OK' means SPINOR was selected
+
+  First differing offset:
+EOF
+		cmp "$READBACK" "$SPI_IMG" 2>&1 | head -2 >&2 || true
+		echo >&2
+		echo "  Do not power-cycle until this is understood. SPI is tried first, so" >&2
+		echo "  a half-written bootloader there can stop the board before eMMC." >&2
+		die "readback mismatch"
+	fi
+else
+	die "readback failed -- the medium's state is unknown, so is the write"
+fi
+
 rkdeveloptool rd
 
-say "done"
+say "done, and the readback matched"
 cat <<'EOF'
-  Verify on the board, over the serial console at 1500000 8N1 on UART2:
+  The bytes on the chip are now known to be the bytes that were sent, and the
+  storage was confirmed to be SPINOR before writing. That is stronger than
+  "wl exited 0" but it is still not proof the board boots from SPI.
+
+  Remaining check, on the serial console (1500000 8N1, UART2):
 
     first line should read  U-Boot TPL 2025.10-OpenWrt-...   (this port)
     and you should see      Trying to boot from SPI
 
-  If instead the board stops after 'Trying to boot from SPI', the container was
-  right but U-Boot proper was not where the SPL looked -- check that
-  CONFIG_SYS_SPI_U_BOOT_OFFS in the defconfig matches the offset asserted above.
+  ⚠️ If the first line still shows a different U-Boot, or the board stops after
+  'Trying to boot from SPI', the container was right but U-Boot proper was not
+  where the SPL looked. Check CONFIG_SYS_SPI_U_BOOT_OFFS against the offset the
+  assert script verified.
 
-  Recovery is unaffected by a failed attempt: Maskrom is always available, and
-  the eMMC image is written independently with
-  rkdeveloptool db <emmc-loader> && rkdeveloptool wl 0 <disk-image>.
+  Recovery if it does not boot: SPI is tried first, so it has to be dealt with,
+  and the same flow that just worked is the way back -- push a spinor loader,
+  cs 9, wl 0 <known-good image>. The eMMC image is independent of all this and is
+  written with rkdeveloptool db <emmc-loader> && rkdeveloptool wl 0 <disk-image>.
 EOF

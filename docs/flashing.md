@@ -539,10 +539,10 @@ U-Boot 会先接管，拿不到 maskrom。
 
 ⚠️ **⚠️ 但请读这一条再照做：`rk3399_loader` 是 eMMC loader，它不写 SPI。**
 它初始化的是 eMMC，之后 `wl` 只对 eMMC 生效 —— **用错 loader 时 `wl` 会报"成功"，
-只是写到另一块介质，没有任何警告。** SPI 要用 `rk3399_loader_spinor_*.bin`。
-上面那句"已在真机验证过"验证的是**进 Maskrom 这个流程**，不是"它能写 SPI"。
-机制与已就绪的 payload 见
-[boot-order.md 的 SPI 一节](boot-order.md#spi-现在可以写了-2026-10-09)。
+只是写到另一块介质，没有任何警告。** SPI 要用 `rk3399_loader_spinor_*.bin`，**或者**用普通 loader 再 `rkdeveloptool cs 9`
+  （`9=SPINOR`）。上面那句"已在真机验证过"验证的是**进 Maskrom 这个流程**，
+  不是"它能写 SPI"。机制与已就绪的 payload 见
+  [boot-order.md 的 SPI 一节](boot-order.md#spi-现在可以写了-2026-10-09)。
 
 写 SPI 用专用脚本，不要手敲 `wl`：
 
@@ -551,6 +551,11 @@ scripts/flash-spi.sh --check                            # 只读，先跑这个
 scripts/flash-spi.sh --plan                             # 再看命令
 scripts/flash-spi.sh --write --loader <spinor-loader>   # 真写
 ```
+
+脚本在写之前会 `cs 9` 确认介质、**写完之后 `rl` 读回来逐字节比对**。
+读回走的是 ROM loader，不是 Linux —— 所以它不受
+[boot-order.md 记的那个 SPI 读不对的问题](boot-order.md#linux-从这块-spi-读不到正确的内容)
+影响，是这块芯片第一次可信的读。
 
 ⚠️ **`--write` 一次都没在硬件上跑过**，loader 版本也未定（见该节）。
 
