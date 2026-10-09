@@ -542,6 +542,51 @@ scripts/flash-spi.sh --write --loader <spinor-loader>   # 真写，要手输 YES
 
 ---
 
+## ⚠️ `Card did not respond to voltage select! : -110` —— 每次启动都出现，**无害**
+
+这行在**每一份**串口抓取里都有，而且是 `log_err`，看着像故障。**它不是。**
+
+**是哪个设备：`mmc@fe320000`，也就是板载 microSD 卡槽，当前是空的。**
+
+```
+MMC:   mmc@fe310000: 2, mmc@fe330000: 0      ← 初始化时的列表
+...
+Scanning bootdev 'mmc@fe320000.bootdev':
+Card did not respond to voltage select! : -110     ← 就在它后面
+Scanning bootdev 'mmc@fe330000.bootdev':
+  1  script       ready   mmc   1  mmc@fe330000.bootdev.part /boot.scr   ← 真正引导它的
+```
+
+三个控制器的身份（`rk3399-rock-pi-4.dtsi` 与板级 dtsi）：
+
+| 地址 | 别名 | 是什么 | 状态 |
+|---|---|---|---|
+| `fe310000` | `sdio0` | **WiFi 芯片**（`brcmf: wifi@1`，`mmc2 = &sdio0`） | ✅ 起来了，相位 231 |
+| `fe320000` | `sdmmc` | **板载 microSD 卡槽**（有 `sdmmc_cd` 卡检测脚，`mmc1 = &sdmmc`） | ⚠️ **空的** |
+| `fe330000` | — | **eMMC**（`mmc0`，HS400） | ✅ 从它引导 |
+
+**源码路径**（`drivers/mmc/mmc.c:2968`）：`sd_send_op_cond()` 超时返回 `-ETIMEDOUT`
+（就是 `-110`），于是再试 MMC 的 `mmc_send_op_cond()`，也失败 → 打印这行并返回
+`-EOPNOTSUPP`。**槽里没卡就是这条路径**，不是出错。
+
+⚠️ **一次启动里它出现三次**（`efi_mgr` 扫描两次 + `fe320000` 扫描一次），因为每次
+重新枚举 bootdev 都会重新探测一遍。**次数不是异常指标。**
+
+⚠️ **同一段里另外两句也是同一回事**，一并记下，免得下次重新怀疑：
+
+| 行 | 含义 |
+|---|---|
+| `Cannot persist EFI variables without system partition` | 本镜像是 ext4 + DOS/MBR，没有 EFI 系统分区 |
+| `Loading Boot0000 'mmc 0' failed` / `EFI boot manager: Cannot load any image` / `Boot failed (err=-14)` | EFI 引导尝试失败，**然后正常回落到 `script` bootdev**，`/boot.scr` 照常找到 |
+
+⚠️ **反过来看，这行其实是一条有用信息**：它说明**板载 SD 卡槽这条路至今没被 U-Boot
+走过** —— 和 [hardware.md](hardware.md) 里「板载 SD 卡槽这条路径至今未验证」是同一件事。
+
+⚠️ **未实测**：插一张卡进去这行会不会消失。**能验证它的只有插卡那次**，
+所以这里只把它记成「空槽的正常路径」，没写成「已验证插卡后消失」。
+
+---
+
 ## 当前状态
 
 | | 状态 |
