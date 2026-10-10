@@ -36,7 +36,7 @@ Radxa ROCK 4B+ 的硬件事实、板型辨识、排针、版本差异、板载�
 | SoC | Rockchip RK3399-T (OP1)，双 Cortex-A72 @ 2016MHz + 四 Cortex-A53 |
 | PMIC | **RK808** @ i2c0 `0x1b`（节点在 `&i2c0` 内） |
 | 内存 | LPDDR4 双通道，2GB 或 4GB（实物 4GB） |
-| 存储 | 32GB 板载 eMMC（HS400）+ microSD + M.2 NVMe + 4MB SPI Flash（早期版贴装） |
+| 存储 | 32GB 板载 eMMC（HS400）+ microSD + M.2 NVMe（⚠️ **板上没插 NVMe**，见下）+ 4MB SPI Flash（早期版贴装） |
 | 以太网 | RTL8211F PHY 挂在 stmmac MAC 上，1Gbps 实测通过 |
 | WiFi/BT | **AP6256**（BCM43456 SDIO + BCM4345C5 BT），sdio0 / uart0 |
 | 音频 | ES8316 @ i2c1 `0x11`，i2s0，MCLK 来自 `SCLK_I2S_8CH_OUT` |
@@ -282,6 +282,26 @@ dmesg 只有 3 条已知无害报错（PCIe `-110`、uart DMA、sound deferred p
 
 这是补上「Armbian TPL + eMMC 引导」那格对照的第一份数据 —— **只 1 次**，
 而判据是 6 次。
+
+### M.2 NVMe：**没有插盘，所以这条路无法测试**
+
+每次启动都有这两行：
+
+```
+rockchip-pcie f8000000.pcie: PCIe link training gen1 timeout!
+rockchip-pcie f8000000.pcie: probe with driver rockchip-pcie failed with error -110
+```
+
+⚠️ **原因（2026-10-11，用户确认）：板上没有插 M.2 NVMe。** 空插槽上链路训练必然超时，
+所以这两行是**预期行为，不是故障** —— 它们属于「无害报错」那一类，和
+`Card did not respond to voltage select!` 同性质。
+
+⚠️ **但这也把它变成第三类状态：无法测试，而不是「坏了」也不是「主动划出范围」。**
+和板载 microSD 卡槽一样：接口在硬件上存在，但没有任何介质可以插进去走一遍。
+⚠️ **别把它记成 PCIe 不可用** —— 没有证据，有的只是没插盘。
+
+（之前这份文档里 PCIe 既不在「已验证」表也不在「划出范围」表，属于没人负责；
+现在明确记成「无法测试」。）
 
 ### ⚠️ 这一节改过四次，每次状态都不同
 

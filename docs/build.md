@@ -60,7 +60,7 @@ overlay/                           按 OpenWrt 源码树路径镜像
   package/boot/uboot-rockchip/Makefile             +8 行：U-Boot 变体 + UBOOT_TARGETS
   package/boot/uboot-rockchip/Makefile.orig        上游基线（故意不同步）
   package/firmware/broadcom-nonfree/Makefile       新增：BCM43456 固件包
-  kernel/rk3399-rock-4b-plus.dts                   205 行，实际代码 58 行，继承上游两个 dtsi
+  kernel/rk3399-rock-4b-plus.dts                   227 行，实际代码 58 行，继承上游两个 dtsi
   u-boot/rock-4b-plus-rk3399_defconfig             U-Boot defconfig（基于 rock-4se）
   u-boot/rk3399-rock-4b-plus-u-boot.dtsi           U-Boot 板级 dtsi（含 LPDDR4 DRAM 参数）
 scripts/
@@ -68,9 +68,10 @@ scripts/
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
   check-patch-sources.sh                           四个补丁源与生成的补丁逐一比对
-check-doc-links.py                               文档里每个相对链接都要能解析（含 #anchor）
   extract-patch-file.sh                            从多文件补丁里取单个文件的新增内容
   extract-patch-file-selftest.sh                   上者的负控制，17 例，先跑它
+check-doc-links.py                               文档里每个相对链接都要能解析（含 #anchor）
+check-bootloader-on-media.sh                     把引导程序从板子的 eMMC 读回来与构建比对
   assert-sdram-params-in-image.py                  断言镜像/引导程序里带着 RK3399 DRAM 参数
   extract-debian-43456.sh                          从 Debian 源包提取 43456 固件
   extract-synaptics-license.py                     提取 Synaptics 许可全文

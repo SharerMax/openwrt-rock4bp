@@ -396,6 +396,23 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
   `docs/boot-order.md` used them to conclude SPI holds nothing bootable; that inference does
   not hold. ⚠️ Whether SPI currently holds anything bootable is **still untested** — do not
   re-record "SPI is empty" as established.
+- ⚠️ **A build tree is not evidence about a board.** Three of this port's worst mistakes
+  were the same shape: `CONFIG_ROCKCHIP_SPI_IMAGE=y` was already set so `u-boot-rockchip-spi.bin`
+  existed for weeks with nothing staging or checking it; "the image carries no bootloader" was
+  written down and never checked, and it does; a build that never started was verified against
+  the *previous* run's log and reported clean. None is visible from `build_dir/`, because that is
+  what you just wrote. **`scripts/check-bootloader-on-media.sh` reads `idbloader` and `u-boot.itb`
+  back off `/dev/mmcblk0` on the board** and compares them with this build — the only thing that
+  settles it. Run it after any flash, and **read its exit status**: board unreachable, untrusted
+  host key, missing `stat`/tool, or unreadable device all report NOT CHECKED and exit non-zero
+  rather than passing. ⚠️ OpenWrt's busybox has **no `stat` applet** — the script uses `wc -c`, and
+  a version using `stat -c%s` reported the board as unreadable for a reason unrelated to the
+  board.
+- ⚠️ **An M.2 NVMe slot is not a tested NVMe slot.** `PCIe link training gen1 timeout!` appears
+  on every boot because **nothing is plugged into it** (confirmed 2026-10-11). That is the same
+  "harmless error" class as the empty microSD slot's `-110`, and it makes the path
+  **untestable** rather than broken — a third status next to "verified" and "out of scope".
+  Do not record PCIe as unavailable; there is no evidence, only an empty slot.
 - The image **does** embed its own bootloader. Earlier docs said otherwise.
 - A bootloader needs **two files**: `idbloader*.img` is TPL+SPL only; U-Boot proper is
   a separate `u-boot.itb`.
@@ -456,6 +473,7 @@ Rules that are easy to get wrong:
 | `classify-serial-logs.sh` | Sort serial captures by the U-Boot `Cannot find regulator pwm init_voltage` line and the SDIO phase |
 | `extract-patch-file.sh` | Pull one file out of a patch, for reading what a patch actually changes. Handles git-style **and** plain `diff -u` patches |
 | `extract-patch-file-selftest.sh` | Negative controls for the above, 17 cases — run it first. ⚠️ it only catches what it covers |
+| `check-bootloader-on-media.sh` | Read `idbloader`/`u-boot.itb` **back off the board's eMMC** and compare with this build. Settles "is the board running what we just built". `--selftest` runs without a board |
 | `extract-debian-43456.sh` | Pull the 43456 firmware blob out of an Armbian package |
 | `extract-synaptics-license.py` | Pull the licence text out of a Synaptics package for `extract-debian-43456.sh` |
 | `regen-dts-patch.sh` | Regenerate the kernel DTS patch, with `dtc` validation |
