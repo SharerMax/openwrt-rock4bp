@@ -3,12 +3,15 @@
 #
 # Run this ON THE BUILD HOST, from the port repo:
 #
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh --verify
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh --verify ext4
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh --list
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdb
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdb ext4
-#     /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/mmcblk0
+#     scripts/deploy.sh --verify          # check the image, write nothing
+#     scripts/deploy.sh --verify ext4     #   ... the writable-rootfs variant
+#     scripts/deploy.sh --list            # list the block devices
+#     sudo scripts/deploy.sh /dev/sdb     # squashfs (default)
+#     sudo scripts/deploy.sh /dev/sdb ext4
+#     sudo scripts/deploy.sh /dev/mmcblk0
+#
+# The OpenWrt tree is located by port-env.sh: $OPENWRT_DIR, the current directory,
+# or a sibling ../openwrt. Run the read-only paths FIRST, every time.
 #
 # A second argument selects the image variant: squashfs (default) or ext4. Both
 # carry the same package set, so this only changes the root filesystem type.
@@ -57,7 +60,8 @@
 
 set -euo pipefail
 
-OPENWRT_DIR="${OPENWRT_DIR:-/home/max/Code/openwrt}"
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
 
 umask 022
 

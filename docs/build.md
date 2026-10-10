@@ -4,20 +4,160 @@
 
 ---
 
-## 环境
+## 从零开始（不依赖任何特定机器）
+
+这一节是自足的：在**任何**满足条件的 Linux 机器上按顺序做完，得到可写入 SD 卡的镜像。
+不需要认识本移植的作者，不需要他的目录布局，也不需要他那台构建机。
+
+### 前提
+
+| 项 | 要求 |
+|---|---|
+| 系统 | Linux（Ubuntu 24.04 验证过；其它发行版未验证） |
+| 磁盘 | **≥ 25 GB 空闲**。这是最大的约束，见下文「磁盘」一节 |
+| 内存 | ≥ 8 GB。10 GB 验证过 |
+| 工具链 | `bash`、`git`、`make`、`gcc`、`binutils`、`python3`、`rsync`、`unzip`、`wget`/`curl`、`gawk`、`file`、`patch`、`diffutils`、`findutils`、`perl`、`subversion`/`git`（取固件用）、`qemu` 类工具（U-Boot 不需要） |
+
+⚠️ **`umask` 必须是 `022`。** OpenWrt 的 `include/prereq-build.mk` 会硬性检查并拒绝其它值。
+本移植的 `scripts/build.sh` 自己设了 `umask 022`，所以用下面的步骤就不会踩到。
+
+⚠️ **不要用 `curl` 测远端可达性去判断 git 源通不通**，用 `git ls-remote`。
+
+### 第 1 步：拿到源码树
+
+```sh
+git clone https://git.openwrt.org/openwrt/openwrt.git
+cd openwrt
+git fetch --tags
+git checkout v25.12.5
+./scripts/feeds update -a
+./scripts/feeds install -a
+```
+
+⚠️ **必须正好是 `v25.12.5`。** 本移植的补丁目录叫 `target/linux/rockchip/patches-6.12/`，
+它只存在于使用 6.12 内核的版本上。换版本不会报错，补丁会静默不应用，然后构建出
+一个**没有这个板子**的树。
+
+⚠️ **BCM43456 固件来自 Debian 的 `firmware-nonfree` 源包**（105 MB，只为取 483 KB），
+`scripts/build.sh` 会自动下载后删除。**这个源需要能访问 Debian**。
+
+### 第 2 步：拿到移植层并落到树旁边
+
+```sh
+git clone <这个仓库的地址> rockpi4bp
+```
+
+⚠️ **把它放在 `openwrt/` 的同级目录**：
+
+```
+<任意目录>/
+├── openwrt/          ← 树
+└── rockpi4bp/        ← 本移植层仓库
+```
+
+同级是**约定而非强制** —— 脚本会先看 `OPENWRT_DIR` 环境变量，再看当前目录，最后看
+`../openwrt`。三者都不成立时报错并告诉你怎么指定，不会去猜。
+
+### 第 3 步：同步 overlay
+
+```sh
+cd ../rockpi4bp
+sh scripts/sync-overlay.sh --from-overlay
+```
+
+三个「原样复制」的文件进入树，四个补丁源逐一与它们生成的补丁比对。**方向必须显式给出**
+（`--from-overlay` 或 `--from-tree`），没有 `--apply` —— 猜方向会用旧的一边覆盖新的一边，
+而且构建照样成功。
+
+`README.md` 和本文都假定你**不会**手改树里的那几个文件。要改就改 `overlay/`，然后
+`--from-overlay` 同步回去。
+
+### 第 4 步：重新生成 DTS 补丁
+
+**只在改过 `overlay/kernel/rk3399-rock-4b-plus.dts` 时需要。**
+
+```sh
+sh scripts/sync-overlay.sh --stage-dts     # 源文件 -> /tmp，regen 从那里读
+sh scripts/regen-dts-patch.sh              # 生成树里的 0001 和 0100，带 dtc 校验
+```
+
+⚠️ **两步都要做。** 漏掉 `--stage-dts` 的话，regen 会读 `/tmp` 里的**旧**文件，
+输出和上次一模一样的补丁，而且**没有任何报错**。这一点真的发生过。
+
+### 第 5 步：构建
+
+```sh
+bash scripts/build.sh
+```
+
+它做四件事，顺序是硬性的：
+
+1. 修正 manifest（关掉 `brcmfmac-firmware-4329-sdio`）
+2. `make defconfig` —— ⚠️ **改过 `DEVICE_PACKAGES` 之后必须跑**，否则构建只打印一行警告
+   然后照样打包上一次那套包
+3. `make -j$(nproc)`
+4. **24 项构建后校验**
+
+⚠️ **退出码 0 不代表成功。** 本移植两次交付过 exit 0 但缺东西的镜像。看校验块的输出，
+不看退出码。日志在 `/tmp/build-full.log`（可用 `BUILD_LOG=` 改）。
+
+### 第 6 步：看结果
+
+```sh
+grep -c '^  OK '     /tmp/build-full.log      # 应为 24
+grep '^  FAILED '    /tmp/build-full.log      # 应为空
+```
+
+产物在 `../openwrt/bin/targets/rockchip/armv8/`：
+
+| 文件 | 用途 |
+|---|---|
+| `openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs.img.gz` | **烧卡用这个** |
+| `openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4.img.gz` | 可写根，供 WiFi 工作用 |
+| `sha256sums` | 校验用 |
+
+⚠️ **镜像自带引导程序**（LBA 0x40 放 TPL+SPL，LBA 0x4000 放 U-Boot 本体），
+所以它可以独立引导，SPI 不是必需品。烧卡步骤见 [flashing.md](flashing.md)。
+
+### 第 7 步（可选，但建议）：确认板子上是这份构建
+
+**构建树里的东西证明不了板子上的东西。** 本移植三次栽在同一个形状上：
+
+- `CONFIG_ROCKCHIP_SPI_IMAGE=y` 早就设了，`u-boot-rockchip-spi.bin` 存在了好几周，
+  没人打包、没人断言、没人用
+- 「镜像里不含引导程序」被写进文档，没人查 —— 它**含**
+- 一次根本没启动的构建被拿上一次运行的日志验证，报成了干净通过
+
+```sh
+bash scripts/check-bootloader-on-media.sh --board root@<板子IP>
+```
+
+它从板子的 `/dev/mmcblk0` 把 `idbloader.img`（LBA 0x40）和 `u-boot.itb`（LBA 0x4000）
+读回来，和这次构建比对。⚠️ **看退出码**：板子不可达、host key 不可信、缺工具、读不到介质
+都会打印原因、退出非零、**并且绝不打印 OK**。这个检查需要板子上能免密 ssh。
+
+`sh scripts/check-bootloader-on-media.sh --selftest` 不需要板子，先跑它。
+
+---
+
+## 本移植实际使用的环境
+
+⚠️ **上面那一节是自足的，这一节只是记录这台机器。** 换机器不影响上面的任何一步。
 
 | 项 | 值 |
 |---|---|
 | 构建机 | `hyv-ub24`，Ubuntu 24.04.5，10 核，10GB RAM |
 | 源码树 | `/home/max/Code/openwrt` |
+| 移植层 | `/home/max/Code/rockpi4bp`（**同级**，符合上面第 2 步的约定） |
 | 工具链 | gcc 14.3.0，binutils 2.44，musl |
 | 内核 | 6.12.94（v25.12.5 pin 的版本，hash `e998a232b941…`） |
 | U-Boot | mainline 2025.10 |
 | 配置 | `rockchip/armv8` → `radxa_rock-4b-plus` |
+| 板子 | `192.168.3.8`，`root`，无密码，MAC `e6:d8:f2:44:0b:9f` |
 
-### ⚠️ umask 必须设为 022
+### ⚠️ umask 必须是 022
 
-构建机默认 umask 是 `0002`，而 `include/prereq-build.mk` 会硬性检查并拒绝非 022。
+这台机器的默认 umask 是 `0002`，而 `include/prereq-build.mk` 会硬性拒绝。
 `scripts/build.sh` 里已经 `umask 022`。
 
 ### 依赖
@@ -29,12 +169,13 @@
 gitee 镜像停更在 `8dff4c9a34`，已改为官方源：`origin` = github，`origin-git` =
 git.openwrt.org，`gitee` 仅作参考。
 
-⚠️ **不要用 curl 测远端可达性**（本机 Windows 没有 curl），用 `git ls-remote`。
-
 ### 磁盘是当前最大约束
 
 构建机 58G，已用 35G，剩 21G。Debian 的 `firmware-nonfree` 源包 105MB 只是为了取一个
 483KB 的文件，下载完立刻删掉。
+
+⚠️ **这台机器没有 loop 设备**（`mount -o loop` 退出码 32），所以不能在构建机上挂载镜像
+比较内容。要比 rootfs 用 `debugfs`，或者把镜像拷到别处挂。
 
 ---
 

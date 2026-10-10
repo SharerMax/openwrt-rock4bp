@@ -1,9 +1,46 @@
 # OpenWrt 25.12.5 → Radxa ROCK (Pi) 4B Plus
 
-分支 `radxa-rock-4b-plus`，基线 `v25.12.5`。移植层仓库 —— OpenWrt 树在构建机
-`hyv-ub24:/home/max/Code/openwrt`。本移植的设备树**继承上游**，实际代码只有 **58 行**（文件共 205 行，其余是注释，说明每一行为什么在那儿）
+分支 `radxa-rock-4b-plus`，基线 `v25.12.5`。这是**移植层仓库**，不是 OpenWrt 树本身。
+
+**✅ 移植完成。** 板上可用：引导、1Gbps 网口、eMMC HS400、USB、WiFi（AP6256）、
+BT 硬件层、RK808 PMIC、RTC。交付构建的引导程序**经读回比对确认就在板上**
+（`scripts/check-bootloader-on-media.sh`）。24 次连续干净启动，随机 panic 已定位并修复。
+
+本移植的设备树**继承上游**，实际代码只有 **58 行**（文件共 227 行，其余是注释，
+说明每一行为什么在那儿）。相对上游的**完整改动清单**见
+[docs/porting-notes.md](docs/porting-notes.md)。
+
+**从零构建**（不依赖任何特定机器）：[docs/build.md 的「从零开始」一节](docs/build.md#从零开始不依赖任何特定机器)。
 
 **未推送到任何上游 remote。**
+
+---
+
+## 怎么构建（最短路径）
+
+```sh
+git clone https://git.openwrt.org/openwrt/openwrt.git && cd openwrt
+git fetch --tags && git checkout v25.12.5
+./scripts/feeds update -a && ./scripts/feeds install -a
+cd .. && git clone <本仓库> rockpi4bp && cd rockpi4bp
+
+sh scripts/sync-overlay.sh --from-overlay     # overlay 进树
+bash scripts/build.sh                          # 构建 + 24 项校验
+
+grep -c '^  OK ' /tmp/build-full.log           # 必须是 24
+```
+
+⚠️ **必须是 `v25.12.5`** —— 补丁目录叫 `patches-6.12/`，换版本不会报错，补丁会静默不应用，
+构建出一个没有这块板子的树。
+
+⚠️ **`umask` 必须是 022**，`build.sh` 自己设了。
+
+⚠️ **退出码 0 不代表成功** —— 看那 24 项校验的输出，不看退出码。
+
+⚠️ **构建树证明不了板子。** 刷完用
+`bash scripts/check-bootloader-on-media.sh --board root@<板子IP>` 把引导程序读回来比对。
+
+完整前提、磁盘需求、分步说明见 [docs/build.md](docs/build.md)。
 
 ---
 
@@ -282,9 +319,10 @@ TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没
 
 | 文件 | 内容 |
 |---|---|
+| **[docs/porting-notes.md](docs/porting-notes.md)** | **相对上游改了什么、为什么、证据等级；没做什么** |
+| **[docs/build.md](docs/build.md)** | **从零构建（环境无关）**、目录结构、24 项校验、包集合、产物 |
 | [docs/hardware.md](docs/hardware.md) | 硬件事实、板型辨识、40-pin、版本差异、按键、介质 |
 | [docs/device-tree.md](docs/device-tree.md) | 设备树策略、继承 dtsi ≠ 继承 board、U-Boot 板级 dtsi、dtc 坑 |
-| [docs/build.md](docs/build.md) | 构建环境、目录结构、24 项校验、包集合、产物、可复现性 |
 | [docs/flashing.md](docs/flashing.md) | 烧卡、首次启动该看什么、eMMC 安装、Maskrom |
 | [docs/boot-order.md](docs/boot-order.md) | SPI → eMMC → SD、镜像自带引导程序、SPI 读不对 |
 | **故障记录** | |
@@ -292,6 +330,10 @@ TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没
 | [docs/postmortem-dram-instability.md](docs/postmortem-dram-instability.md) | 修好之后发现的随机 panic，根因缩小到 DRAM 初始化 |
 | [docs/wifi.md](docs/wifi.md) | WiFi 排查完整记录（证据、测试矩阵、固件许可） |
 | [AGENTS.md](AGENTS.md) | 给 AI agent 的工作指南 |
+
+⚠️ **「已验证」的每一行都来自真机。** 没有在硬件上跑过的东西不在那个表里，
+而是写进 [porting-notes.md 的「没做的事」](docs/porting-notes.md#5-这个移植没有做的事)
+或「无法测试」那一类。**三种状态要分开：已验证、主动划出范围、无法测试。**
 
 要动手的话先读 [AGENTS.md](AGENTS.md)。
 

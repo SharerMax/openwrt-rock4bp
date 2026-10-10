@@ -91,8 +91,13 @@
 
 set -e
 
-PORT_DIR="${PORT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-OPENWRT_DIR="${OPENWRT_DIR:-/home/max/Code/openwrt}"
+# Resolves PORT_DIR from this file's location and OPENWRT_DIR from the
+# environment, the current directory, or a sibling checkout. It used to be the
+# build host's absolute path, which made the instructions in docs/build.md true
+# on one machine only.
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
+
 STAGED_DTS=/tmp/rk3399-rock-4b-plus.dts
 
 # "" = check only, "tree" = tree is the source, "overlay" = overlay is the source

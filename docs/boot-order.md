@@ -10,7 +10,7 @@
 >
 > 本文长期写着「Maskrom `wl` 只写 eMMC，不碰 SPI」。**观察是对的，机制是错的** ——
 > 而错的机制会让人以为这条路是封死的。新增的一节：
-> [SPI 现在可以写了](#spi-现在可以写了-2026-10-09)。
+> [SPI 现在可以写了](#spi-现在可以写了2026-10-09)。
 
 > ⚠️ **2026-10-10：SPI 一直可见，10-08 记的「不被探测」整段作废。**
 >
@@ -679,10 +679,10 @@ Scanning bootdev 'mmc@fe330000.bootdev':
 | | 状态 |
 |---|---|
 | Maskrom 恢复流程 | ✅ **已在真机验证**（官方 `rk3399_loader`） |
-| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`）。⚠️ **不碰 SPI 是因为用的是 eMMC loader**，不是工具的限制 —— 见[上面那节](#spi-现在可以写了-2026-10-09) |
+| **Maskrom 写 eMMC 整包** | ✅ **已验证**（`rkdeveloptool wl 0 <镜像>`）。⚠️ **不碰 SPI 是因为用的是 eMMC loader**，不是工具的限制 —— 见[上面那节](#spi-现在可以写了2026-10-09) |
 | ⚠️ **Maskrom 写 SPI** | ⚠️ **未上机**。payload 已就绪并通过断言（`u-boot-rockchip-spi.bin`），loader 必须换 spinor 的 |
 | ⚠️ SPI 上是否还有可引导镜像 | ❌ **没有** —— `Trying to boot from BOOTROM` 说明 ROM 在 SPI 上没找到东西 |
-| ⚠️ **当前唯一恢复路径** | **只有 Maskrom** —— 不是因为 SPI 写不了（[SPI 现在可以写了](#spi-现在可以写了-2026-10-09)），而是因为 **SPI 上现在是空的** |
+| ⚠️ **当前唯一恢复路径** | **只有 Maskrom** —— 不是因为 SPI 写不了（[SPI 现在可以写了](#spi-现在可以写了2026-10-09)），而是因为 **SPI 上现在是空的** |
 | 本移植的 U-Boot 是否跑过 | ✅ 跑过，而且现在 **24 次连续启动零 panic**（四个构建，各 6 次） |
 | `rockchip,sdram-params` 修复 | ✅ **确认生效**（TPL 打出两通道各 2048MB） |
 | OpenWrt 从 eMMC 启动 | ✅ 已验证（rootfs 挂载 + 到 shell） |

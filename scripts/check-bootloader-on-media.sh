@@ -67,15 +67,15 @@
 
 set -u
 
-PORT_DIR="${PORT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-OPENWRT_DIR="${OPENWRT_DIR:-/home/max/Code/openwrt}"
-UB_REL="build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10"
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
 
 BOARD="${BOARD:-root@192.168.3.8}"
 MEDIA_DEV="${MEDIA_DEV:-/dev/mmcblk0}"
 SECTOR=512
 LBA_IDB=64              # seek=64 in the image recipe
 LBA_ITB=16384           # 0x4000, where the SPL expects the ITB
+UB_REL=""               # filled in below, by glob -- u-boot-2025.10 is a version
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes"
 KNOWN_HOSTS=""
 TRANSPORT=ssh           # ssh | local ; the self-test uses local
@@ -282,14 +282,15 @@ PY
 fi
 
 # ================================================================== real run
+UB_REL=$(port_uboot_dir) || exit 1
 say "build artefacts"
 for f in idbloader.img u-boot.itb; do
-    if [ -f "$OPENWRT_DIR/$UB_REL/$f" ]; then
+    if [ -f "$UB_REL/$f" ]; then
         printf '  %-18s %10s B  %s\n' "$f" \
-            "$(stat -c%s "$OPENWRT_DIR/$UB_REL/$f")" \
-            "$(sha256sum "$OPENWRT_DIR/$UB_REL/$f" | cut -d' ' -f1)"
+            "$(wc -c < "$UB_REL/$f" | tr -d ' ')" \
+            "$(sha256sum "$UB_REL/$f" | cut -d' ' -f1)"
     else
-        printf '  %-18s MISSING under %s\n' "$f" "$OPENWRT_DIR/$UB_REL"
+        printf '  %-18s MISSING under %s\n' "$f" "$UB_REL"
     fi
 done
 
@@ -312,8 +313,8 @@ if [ "$TRANSPORT" = ssh ]; then
 fi
 
 say "comparison"
-compare_artefact "idbloader.img (TPL+SPL)" "$OPENWRT_DIR/$UB_REL/idbloader.img" "$LBA_IDB"
-compare_artefact "u-boot.itb (U-Boot proper)" "$OPENWRT_DIR/$UB_REL/u-boot.itb" "$LBA_ITB"
+compare_artefact "idbloader.img (TPL+SPL)" "$UB_REL/idbloader.img" "$LBA_IDB"
+compare_artefact "u-boot.itb (U-Boot proper)" "$UB_REL/u-boot.itb" "$LBA_ITB"
 
 say "against recovery/, the build that passed six consecutive clean boots"
 REC="$PORT_DIR/recovery"

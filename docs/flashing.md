@@ -10,25 +10,24 @@
 
 ## 1. 拿到镜像
 
-在构建机上（`hyv-ub24`）：
+构建完成后，镜像在树的 `bin/targets/rockchip/armv8/` 下：
 
 ```bash
-ssh hyv-ub24 'cd /home/max/Code/openwrt && ls -lah bin/targets/rockchip/armv8/'
+ls -lah "${OPENWRT_DIR:-$PWD}"/bin/targets/rockchip/armv8/
 ```
 
-拉到本机（可选，方便留档）：
+⚠️ `OPENWRT_DIR` 就是[第 5 步构建时用的那个树](build.md#从零开始不依赖任何特定机器)，
+没设的话就是当前目录。
+
+拉到别处留档（可选）：
 
 ```bash
-scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz .
-scp hyv-ub24:/home/max/Code/openwrt/bin/targets/rockchip/armv8/sha256sums .
+scp user@buildhost:"${OPENWRT_DIR}/bin/targets/rockchip/armv8/openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz" .
+scp user@buildhost:"${OPENWRT_DIR}/bin/targets/rockchip/armv8/sha256sums" .
 ```
 
-校验（**当前构建 `a48a30233f`**）：
-
-```
-5a09fc419fb39a81ee3d749f8edcaeaf6313a31e9422b2b476b8db65c7701325  openwrt-rockchip-armv8-radxa_rock-4b-plus-ext4-sysupgrade.img.gz
-f462fb96ed4eccb4c29452ce8ab8a5b2964294fc3678129866baedccaed11d29  openwrt-rockchip-armv8-radxa_rock-4b-plus-squashfs-sysupgrade.img.gz
-```
+⚠️ **上面的 sha256 是某一次特定构建的**，换一次构建就会变 —— 以树里的
+`sha256sums` 为准，用 `sha256sum -c` 校验，不要照抄下面表里的值。
 
 **历史校验和**（别搞混，sha256 变了就是不同镜像）：
 
@@ -99,11 +98,11 @@ ext4 版本适合后续要持久化数据或装大量包时再用。
 在**构建机**上做（注意：写卡会清空目标设备）。脚本在移植仓库里，不在 OpenWrt 树里：
 
 ```bash
-ssh hyv-ub24
-/home/max/Code/rockpi4bp/scripts/deploy.sh --list          # 先看有哪些设备
-/home/max/Code/rockpi4bp/scripts/deploy.sh --verify        # 只校验镜像，不写任何设备
-sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX           # squashfs（默认）
-sudo /home/max/Code/rockpi4bp/scripts/deploy.sh /dev/sdX ext4      # 可写根
+cd <移植仓库>                       # 本文写作时是 /home/max/Code/rockpi4bp
+scripts/deploy.sh --list            # 先看有哪些设备
+scripts/deploy.sh --verify          # 只校验镜像，不写任何设备
+sudo scripts/deploy.sh /dev/sdX     # squashfs（默认）
+sudo scripts/deploy.sh /dev/sdX ext4   # 可写根
 ```
 
 `--list` 会打印所有块设备、容量、型号、挂载点。**这一步别跳过** —— 它是防止写错盘的关键。
@@ -573,7 +572,7 @@ download key pressed, entering download mode...resetting ...
 只是写到另一块介质，没有任何警告。** SPI 要用 `rk3399_loader_spinor_*.bin`，**或者**用普通 loader 再 `rkdeveloptool cs 9`
   （`9=SPINOR`）。上面那句"已在真机验证过"验证的是**进 Maskrom 这个流程**，
   不是"它能写 SPI"。机制与已就绪的 payload 见
-  [boot-order.md 的 SPI 一节](boot-order.md#spi-现在可以写了-2026-10-09)。
+  [boot-order.md 的 SPI 一节](boot-order.md#spi-现在可以写了2026-10-09)。
 
 写 SPI 用专用脚本，不要手敲 `wl`：
 

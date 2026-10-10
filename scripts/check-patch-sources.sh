@@ -41,9 +41,8 @@
 
 set -e
 
-PORT_DIR=${PORT_DIR:-/home/max/Code/rockpi4bp}
-OPENWRT_DIR=${OPENWRT_DIR:-/home/max/Code/openwrt}
-HERE=$(cd "$(dirname "$0")" && pwd)
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
 
 failures=0
 
@@ -53,7 +52,7 @@ failures=0
 check_one () {   # $1 overlay file, $2 patch, $3 target path inside the patch
 	_src=$1
 	_out=$(mktemp)
-	"$HERE/extract-patch-file.sh" "$2" "$3" > "$_out"
+	"$_here/extract-patch-file.sh" "$2" "$3" > "$_out"
 
 	if [ ! -f "$_src" ]; then
 		printf '  MISSING  %s  <- %s\n' "$_src" "$(basename "$2")"

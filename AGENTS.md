@@ -4,7 +4,9 @@ Guidance for AI agents working in this repository.
 
 This repo is the **port**, not the OpenWrt tree. It holds the overlay sources, the
 scripts, and the documentation for `radxa_rock-4b-plus` on OpenWrt 25.12.5. The OpenWrt
-tree itself lives on the build host at `/home/max/Code/openwrt`.
+tree is a **separate checkout**; the scripts find it from `OPENWRT_DIR`, the current
+directory, or a sibling `../openwrt` (see `scripts/port-env.sh`), so nothing here
+depends on where either one lives.
 
 Read this before changing anything. Most of the rules below exist because the obvious
 approach has already failed here, and the failure was expensive or silent.
@@ -439,10 +441,11 @@ clean:
 
 ```sh
 # port repo
-cd /home/max/Code/rockpi4bp && git status
+git -C "$PORT_DIR" status
 
-# OpenWrt tree
-cd /home/max/Code/openwrt && git status
+# OpenWrt tree -- the same path the scripts resolve, so use the same one they do
+OPENWRT_DIR="${OPENWRT_DIR:-$PWD}"
+git -C "$OPENWRT_DIR" status
 ```
 
 Rules that are easy to get wrong:

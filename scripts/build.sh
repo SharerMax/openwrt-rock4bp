@@ -16,18 +16,24 @@
 #
 # Resolved BEFORE the cd below, and that ordering is load-bearing. $0 is only
 # absolute when the caller passed an absolute path, so `cd "$(dirname "$0")"`
-# after `cd /home/max/Code/openwrt` resolves a relative "scripts/build.sh"
-# against the OpenWrt tree and SCRIPT_DIR becomes .../openwrt/scripts -- a
-# directory that does not exist. Observed 2026-10-10: four assertions reported
-# FAILED with "can't open file .../openwrt/scripts/assert-*.py", on a build
-# whose artefacts passed all four once the real path was used. The checks were
-# not wrong; they were not finding their own helpers. Nothing documented a
-# canonical invocation, so this broke for every relative-path caller.
+# after `cd $OPENWRT_DIR` resolves a relative "scripts/build.sh" against the
+# OpenWrt tree and SCRIPT_DIR becomes .../openwrt/scripts -- a directory that
+# does not exist. Observed 2026-10-10: four assertions reported FAILED with
+# "can't open file .../openwrt/scripts/assert-*.py", on a build whose artefacts
+# passed all four once the real path was used. The checks were not wrong; they
+# were not finding their own helpers. Nothing documented a canonical
+# invocation, so this broke for every relative-path caller.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-cd /home/max/Code/openwrt || exit 99
+# OPENWRT_DIR used to be the build host's absolute path, which made these
+# instructions true on exactly one machine. port-env.sh resolves it from the
+# environment, from the current directory, or from a sibling checkout, and
+# stops with a message instead of reading some other tree.
+. "$SCRIPT_DIR/port-env.sh" || exit 99
+
+cd "$OPENWRT_DIR" || exit 99
 umask 022
-LOG=/tmp/build-full.log
+LOG="${BUILD_LOG:-/tmp/build-full.log}"
 : > "$LOG"
 
 # Recorded before anything else so the log can be dated. On 2026-10-06 a build was
@@ -120,7 +126,12 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   #     actually proves the WiFi power-sequence fix is in the image
   PATCH=target/linux/rockchip/patches-6.12/0001-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch
   DTB=build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/image-rk3399-rock-4b-plus.dtb
-  DTC=build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/scripts/dtc/dtc
+  # Kernel and U-Boot directories are resolved by glob, not by version. They used
+  # to name linux-6.12.94 and u-boot-2025.10 literally, so an OpenWrt bump left
+  # every check reading a directory that no longer exists -- or, worse, one left
+  # over from a previous build.
+  KREL=$(port_kernel_dir) || exit 1
+  DTC="$KREL/scripts/dtc/dtc"
 
   check "dtb is newer than the patch that builds it" \
     "[ -f '$DTB' ] && [ '$DTB' -nt '$PATCH' ]"
@@ -150,7 +161,7 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
     "{ '$DTC' -I dtb -O dts '$DTB' 2>/dev/null | awk '/spi@ff1d0000/,/^\t};/' | grep -q 'status = \"okay\"'; } && '$DTC' -I dtb -O dts '$DTB' 2>/dev/null | grep -q 'jedec,spi-nor'"
 
   check "kernel patch applied without rejects" \
-    "! find build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94/arch -name '*.rej' | grep -q ."
+    "! find '$KREL/arch' -name '*.rej' | grep -q ."
 
   # The U-Boot/SPL device tree is checked the same way, and for a harsher reason:
   # two separate defects in it cost a working board.
@@ -169,7 +180,8 @@ echo "REAL_EXIT_CODE=$rc" >> "$LOG"
   #
   # Content checks on the compiled .dtb, for the same reason the kernel ones are:
   # neither defect shows up in a file listing or a size.
-  UB=build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10
+  UBREL=$(port_uboot_dir) || exit 1
+  UB="$UBREL"
   UB_PATCH=package/boot/uboot-rockchip/patches/0102-board-rockchip-Add-ROCK-4B-plus-U-Boot-dtsi.patch
   UBDTC=$UB/scripts/dtc/dtc
 

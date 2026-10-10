@@ -1,14 +1,19 @@
 #!/bin/sh
 # Regenerate the kernel + U-Boot device-tree patches from the local overlay DTS
-# and sanity-check the result with dtc. Run from the OpenWrt tree root.
+# and sanity-check the result with dtc. Run from the OpenWrt tree.
 set -e
 
-TOP=/home/max/Code/openwrt
-K="$TOP/build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-6.12.94"
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
+
+# Resolved by glob, not by version: linux-6.12.94 is OpenWrt's choice, and naming
+# it here meant this script silently wrote patches against a directory from a
+# previous build after an OpenWrt bump.
+K=$(port_kernel_dir)
 D="$K/arch/arm64/boot/dts/rockchip"
 DTS=/tmp/rk3399-rock-4b-plus.dts
-KERNEL_PATCH="$TOP/target/linux/rockchip/patches-6.12/0001-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch"
-UBOOT_PATCH="$TOP/package/boot/uboot-rockchip/patches/0100-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch"
+KERNEL_PATCH="$OPENWRT_DIR/target/linux/rockchip/patches-6.12/0001-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch"
+UBOOT_PATCH="$OPENWRT_DIR/package/boot/uboot-rockchip/patches/0100-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch"
 
 echo "=== 1. dtc validation (file must sit in dts/rockchip so #include resolves) ==="
 cd "$K"

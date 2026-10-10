@@ -1,11 +1,12 @@
 #!/bin/bash
 # Write this port's U-Boot into the board's SPI flash, from a Maskrom-mode host.
 #
-# Run ON THE BUILD HOST, from the port repo:
+# Run ON THE BUILD HOST, from the port repo. This one needs bash, not sh --
+# it uses `set -o pipefail` and bash arrays:
 #
-#     /home/max/Code/rockpi4bp/scripts/flash-spi.sh --check
-#     /home/max/Code/rockpi4bp/scripts/flash-spi.sh --plan
-#     /home/max/Code/rockpi4bp/scripts/flash-spi.sh --write
+#     bash scripts/flash-spi.sh --check    # read-only: verify the image, touch no device
+#     bash scripts/flash-spi.sh --plan     # print what --write would run
+#     bash scripts/flash-spi.sh --write --loader <spinor-loader>
 #
 # ------------------------------------------------------------------------------------
 # WHY A SEPARATE SCRIPT FROM deploy.sh
@@ -71,8 +72,12 @@
 
 set -euo pipefail
 
-OPENWRT_DIR="${OPENWRT_DIR:-/home/max/Code/openwrt}"
-UB_DIR="$OPENWRT_DIR/build_dir/target-aarch64_generic_musl/u-boot-rock-4b-plus-rk3399/u-boot-2025.10"
+_here=$(cd "$(dirname "$0")" && pwd)
+. "$_here/port-env.sh"
+
+# By glob, not by version: u-boot-2025.10 is OpenWrt's choice and naming it here
+# would leave this script writing against a leftover directory after a bump.
+UB_DIR=$(port_uboot_dir)
 SPI_IMG="${SPI_IMG:-$UB_DIR/u-boot-rockchip-spi.bin}"
 IDBLOADER="${IDBLOADER:-$UB_DIR/idbloader.img}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
