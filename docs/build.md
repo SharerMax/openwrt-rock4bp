@@ -67,9 +67,10 @@ scripts/
   build.sh                                         manifest + 构建后 24 项校验
   regen-dts-patch.sh                               重新生成内核补丁 + dtc 校验
   sync-overlay.sh                                  比对 overlay/ 与远端源码树
-  check-patch-sources.sh                           三个补丁源与生成的补丁逐一比对
+  check-patch-sources.sh                           四个补丁源与生成的补丁逐一比对
 check-doc-links.py                               文档里每个相对链接都要能解析（含 #anchor）
   extract-patch-file.sh                            从多文件补丁里取单个文件的新增内容
+  extract-patch-file-selftest.sh                   上者的负控制，17 例，先跑它
   assert-sdram-params-in-image.py                  断言镜像/引导程序里带着 RK3399 DRAM 参数
   extract-debian-43456.sh                          从 Debian 源包提取 43456 固件
   extract-synaptics-license.py                     提取 Synaptics 许可全文

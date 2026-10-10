@@ -19,6 +19,25 @@
 #
 # Called from sync-overlay.sh, which turns a mismatch into a non-zero exit.
 # Both directions, because this is a comparison and there is nothing to copy.
+#
+# COVERAGE
+#
+#   overlay source                                 -> patch
+#   overlay/kernel/rk3399-rock-4b-plus.dts          -> 0001  (kernel,  regenerated)
+#   overlay/kernel/rk3399-rock-4b-plus.dts          -> 0100  (U-Boot,  regenerated)
+#   overlay/u-boot/rock-4b-plus-rk3399_defconfig    -> 0101  (by hand)
+#   overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi  -> 0102  (by hand)
+#
+# The first two are the SAME source generating two patches, so a report naming
+# only the source would be ambiguous exactly when it mattered: both lines would
+# read "DRIFT rk3399-rock-4b-plus.dts". Every line names the patch instead.
+#
+# 0100 was absent from this list until 2026-10-11, and the reason was a tool
+# limitation rather than a considered omission. regen-dts-patch.sh emits it as
+# plain `diff -u` output with no "diff --git" line; the old extractor could only
+# address a file by that line, so it returned nothing and the comparison never
+# ran. Nothing reported the absence, because a skipped check and a passing check
+# produce the same absence of complaints.
 
 set -e
 
@@ -37,7 +56,7 @@ check_one () {   # $1 overlay file, $2 patch, $3 target path inside the patch
 	"$HERE/extract-patch-file.sh" "$2" "$3" > "$_out"
 
 	if [ ! -f "$_src" ]; then
-		printf '  MISSING  %s\n' "$_src"
+		printf '  MISSING  %s  <- %s\n' "$_src" "$(basename "$2")"
 		rm -f "$_out"
 		failures=$((failures + 1))
 		return 0
@@ -50,10 +69,12 @@ check_one () {   # $1 overlay file, $2 patch, $3 target path inside the patch
 	fi
 
 	if cmp -s "$_out" "$_src"; then
-		printf '  MATCH    %s\n' "$(basename "$_src")"
+		printf '  MATCH    %s  -> %s\n' \
+			"$(basename "$_src")" "$(basename "$2")"
 	else
-		printf '  DRIFT    %s  (source %s B, patch payload %s B)\n' \
-			"$(basename "$_src")" "$(stat -c%s "$_src")" "$(stat -c%s "$_out")"
+		printf '  DRIFT    %s  <- %s  (source %s B, patch payload %s B)\n' \
+			"$(basename "$_src")" "$(basename "$2")" \
+			"$(stat -c%s "$_src")" "$(stat -c%s "$_out")"
 		diff "$_src" "$_out" | head -8 | sed 's/^/            /'
 		failures=$((failures + 1))
 	fi
@@ -64,6 +85,11 @@ check_one () {   # $1 overlay file, $2 patch, $3 target path inside the patch
 check_one "$PORT_DIR/overlay/kernel/rk3399-rock-4b-plus.dts" \
 	"$OPENWRT_DIR/target/linux/rockchip/patches-6.12/0001-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch" \
 	arch/arm64/boot/dts/rockchip/rk3399-rock-4b-plus.dts
+
+# Same source, second consumer, and the one that used to go unchecked entirely.
+check_one "$PORT_DIR/overlay/kernel/rk3399-rock-4b-plus.dts" \
+	"$OPENWRT_DIR/package/boot/uboot-rockchip/patches/0100-arm64-dts-rockchip-add-Radxa-ROCK-4B-plus.patch" \
+	dts/upstream/src/arm64/rockchip/rk3399-rock-4b-plus.dts
 
 check_one "$PORT_DIR/overlay/u-boot/rock-4b-plus-rk3399_defconfig" \
 	"$OPENWRT_DIR/package/boot/uboot-rockchip/patches/0101-configs-add-rock-4b-plus-rk3399-defconfig.patch" \

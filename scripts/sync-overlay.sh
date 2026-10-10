@@ -51,8 +51,13 @@
 #   overlay/u-boot/rk3399-rock-4b-plus-u-boot.dtsi a patch SOURCE, used by hand
 #
 # What lands in the tree is a generated patch, so copying a .dts over a .patch
-# would be meaningless. regen-dts-patch.sh performs the first of those; the two
-# U-Boot ones are turned into patches by hand.
+# would be meaningless. regen-dts-patch.sh turns the first of those into TWO
+# patches -- the kernel's 0001 and the U-Boot's 0100 -- while the other two are
+# turned into patches by hand.
+#
+# One source feeding two patches is why check-patch-sources.sh names the patch in
+# every report line: otherwise both failures would print the same
+# "DRIFT rk3399-rock-4b-plus.dts" and neither would say which patch had drifted.
 #
 # THIRD KIND, ADDED 2026-10-08: a patch with no overlay source at all --
 #
