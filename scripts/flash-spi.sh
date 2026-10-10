@@ -62,9 +62,12 @@
 # write fails, trying the other loader is the first thing to do, because a loader
 # that cannot drive the flash produces a write error rather than a silent one.
 #
-# Entering Maskrom: this board's SPI is tried first by the boot ROM, so if SPI holds
-# anything bootable the SPI CLK pin (40-pin header 23) must be shorted to GND (25)
-# first, and the short removed after the board enumerates. See docs/boot-order.md.
+# Entering Maskrom: hold the on-board Maskrom or Recovery key while powering on.
+# Measured 2026-10-10, repeatedly -- the SPI pins do NOT need shorting first.
+# Radxa's official step 1 (short SPI CLK, 40-pin 23/25, to GND) is kept as a
+# fallback; it also works, but shorting is no longer required on this board.
+# Note this is about REACHING maskrom only -- SPI is still searched before eMMC
+# and SD once the ROM is running. See docs/boot-order.md.
 
 set -euo pipefail
 

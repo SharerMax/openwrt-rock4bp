@@ -67,13 +67,30 @@
 	 * The reason is that the button is not a Linux input. Per Radxa's
 	 * documentation the on-board button is a *Maskrom* button, and maskrom
 	 * mode is selected by the boot ROM sampling the pin at power-on: hold the
-	 * button while applying power, and the ROM enters maskrom instead of
-	 * loading the SPI flash. There is no Linux-visible event to describe.
+	 * button while applying power, and the ROM enters maskrom. There is no
+	 * Linux-visible event to describe.
+	 *
+	 * Note what this does NOT say: it does not say the ROM skips the SPI
+	 * flash. Measured 2026-10-10, maskrom enumerates on the USB host while the
+	 * serial console simultaneously shows the TPL/SPL that came off SPI. Both
+	 * happen; why is unknown.
 	 *
 	 * Leaving the node in would also permanently claim gpio4_B2, which the
 	 * 40-pin header and expansion HATs may want.
 	 *
 	 * RESET and maskrom are likewise bootloader-level and need no DT nodes.
+	 *
+	 * The board has a third button as well -- Recovery. This port's docs used to
+	 * say the board had only Maskrom and Reset, which was wrong; it was decided
+	 * from two written sources and nobody looked at the board. Measured
+	 * 2026-10-10: either Maskrom or Recovery, held at power-on, puts the board
+	 * into maskrom -- repeatedly, without shorting the SPI pins. Why that works
+	 * while the boot ROM still loads TPL from SPI first is NOT understood, and
+	 * "the key outranks SPI" is contradicted by the serial log, so nothing here
+	 * describes the key electrically. The no-gpio-keys decision still stands on
+	 * what was actually measured -- holding a key moves no GPIO -- and if that
+	 * ever stops being true, this comment is what has to change, along with the
+	 * pin.
 	 */
 };
 

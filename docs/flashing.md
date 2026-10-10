@@ -307,8 +307,11 @@ brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4345/9 wl0: ... version 7.84.17.1
 cat /sys/kernel/debug/gpio | grep -i recovery
 ```
 
-期望**无输出** —— 板载按键是 Maskrom 键，由 boot ROM 在上电瞬间采样，Linux 侧
-不存在对应输入，所以 DTS 里刻意没有 gpio-keys 节点。
+期望**无输出** —— 板载按键是 **Maskrom / Reset / Recovery 三颗**，前两颗由 boot ROM 和
+引导程序在上电瞬间采样，Linux 侧不存在对应输入，所以 DTS 里刻意没有 gpio-keys 节点。
+⚠️ 这条命令与 Recovery 键**是否存在无关**（它是实物）；⚠️ 也不要从无输出推断按键不存在。
+⚠️ **按键已实测能进 maskrom、且不必短接 SPI** —— 见
+[hardware.md](hardware.md#板载按键maskromresetrecovery)。
 
 **eMMC / SPI**
 
@@ -327,9 +330,10 @@ ls /sys/class/leds/               # 蓝色状态灯 gpio3_PD5
 
 **板载按键**
 
-板上是 **Maskrom 按键**，不是 recovery 键。功能由 **boot ROM 在上电瞬间**采样 ——
-按住 + 上电即进 maskrom，**Linux 侧不存在对应输入**。所以 DTS 里刻意没有
-gpio-keys 节点，`/sys/kernel/debug/gpio | grep -i recovery` 应无输出。
+板上是 **Maskrom / Reset / Recovery 三颗按键**。前两颗由 **boot ROM 与引导程序在上电瞬间**
+采样 —— 按住 **Maskrom 或 Recovery** + 上电即进 maskrom（**不必短接 SPI**），
+**Linux 侧不存在对应输入**。所以 DTS 里刻意没有 gpio-keys 节点，
+`/sys/kernel/debug/gpio | grep -i recovery` 应无输出。
 
 进 maskrom 的步骤见第 7 节末尾和第 9 节。
 
@@ -508,34 +512,40 @@ cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
 
 **这是唯一能改写 SPI 上引导程序的路径。** 板子起不来、microSD 也救不回来时的最后手段。
 
-板载按键是 **Maskrom 按键**，功能由 **boot ROM 在上电瞬间**采样决定 —— Linux 侧看不到
-任何事件。按键的硬件事实与板型辨识见 [hardware.md](hardware.md#板载按键是-maskrom不是-recovery)。
+板载按键是 **Maskrom / Reset / Recovery 三颗**（2026-10-10 目视确认），前两颗由 **boot ROM
+在上电瞬间**采样决定 —— Linux 侧看不到任何事件。按键的硬件事实与板型辨识见
+[hardware.md](hardware.md#板载按键maskromresetrecovery)。
 
-Radxa 官方进 maskrom 的步骤：
+⭐ **2026-10-10 实测：进 maskrom 不用再短接 SPI 了。** 按板上的 **Maskrom 或 Recovery 键**
+即可，**重复多次每次都成功**：
 
 ```
-① 若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND
-② 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
-③ 主板未供电前按住 Maskrom 按键
-④ 使用电源适配器给主板供电
-⑤ 主板供电后松开 Maskrom 按键
+① 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
+② 主板未供电前按住 Maskrom 或 Recovery 按键
+③ 使用电源适配器给主板供电
+④ 主板供电后松开按键
+若主板电源绿灯常亮，说明成功进入 Maskrom 模式。
 ```
 
-成功后**电源绿灯常亮**，PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为
-`2207:330c`），用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
+成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为 `2207:330c`），
+用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
 
-⚠️ **第 ① 步对这块板是必需的** —— 本板贴了 4MB SPI Flash，不短接的话 SPI 里的
-U-Boot 会先接管，拿不到 maskrom。
+⚠️ **Radxa 官方五步流程（含"将 SPI Flash 对应引脚接 GND"）仍然保留备用** —— 那是本仓库
+2026-10-06 实际救回板子用的流程。**本板实测按键直进就够了**，官方那步可以省。
+⚠️ 省掉它省的是"可能短错、可能虚焊"，**不是**省掉后续选 loader 的坑：下面那条
+"用错 loader 静默写到另一块介质"照样存在。
 
-好消息是**只有进 maskrom 才需要短接 SPI**，正常的 SPI 引导（以及上面的 `dd` 路线）
-完全不受影响，短接也不用常做。
+⚠️ **为什么按了键还能进 maskrom，机制未测。** 那次上电**串口有 TPL/SPL 输出** —— boot ROM
+**照样先跑了 SPI**，所以这**不是**"按键优先级高于 SPI"，两个观察同时成立而原因未知。
+⚠️ **别写成"SPI 排第一所以按键没用"** —— 它确实枚举出了设备。详见
+[boot-order.md](boot-order.md)。
 
 > ⚠️ **但别把"短接"读成"绕过 SPI 的手段"。** 实测短接**不会**让 boot ROM 跳过 SPI
 > —— 短接后 `mtd0` 消失，但串口第一行仍是 SPI 里的 TPL。**SPI 排第一、读到就赢。**
 > 详见 [boot-order.md](boot-order.md)。
 
-✅ **这条路径已在真机上验证过**（2026-10-06）：SPI 上的 U-Boot 起不来时，用官方
-`rk3399_loader` 加 Armbian 的引导程序成功救回。这条路径可用，比整机报废值得好得多。
+✅ **两条进 maskrom 的路径都在真机验证过**（2026-10-06 官方五步含短接 SPI；
+2026-10-10 板上按键直进、不短接，重复多次）。这条路径可用，比整机报废值得好得多。
 
 ⚠️ **⚠️ 但请读这一条再照做：`rk3399_loader` 是 eMMC loader，它不写 SPI。**
 它初始化的是 eMMC，之后 `wl` 只对 eMMC 生效 —— **用错 loader 时 `wl` 会报"成功"，
@@ -733,11 +743,11 @@ SPL 之后。
 
 ### 恢复路线 B：Maskrom 重刷 SPI
 
-见[最后一层兜底：Maskrom 模式](#最后一层兜底maskrom-模式)。**本板必须先把 SPI Flash
-引脚短接到 GND**，否则 SPI 里的 U-Boot 会抢先接管，拿不到 maskrom。
+见[最后一层兜底：Maskrom 模式](#最后一层兜底maskrom-模式)。⭐ **2026-10-10 更新：不需要
+短接 SPI Flash 引脚** —— 按住板上的 Maskrom 或 Recovery 键上电即可，重复多次实测。
+⚠️ Radxa 官方五步流程（含短接那步）仍然有效，留作备用。
 
-✅ **这条路已在真机验证过**（2026-10-06）：用官方 `rk3399_loader` 加 Armbian 的引导
-程序成功救回。
+✅ **这条路已在真机验证过**（2026-10-06 官方五步含短接；2026-10-10 按键直进不短接）。
 
 ⚠️ **❌ 从 Linux 写 SPI 这条替代路径不可用 —— 已在真机验证。**
 不是"读不稳定"，是**读到的不是芯片内容**。完整证据见
@@ -753,8 +763,13 @@ SPL 之后。
 | 串口第一行仍是 `U-Boot TPL 2022.07_armbian` | **boot ROM 照样从 SPI 加载引导程序** |
 | `Loading Environment from SPIFlash` 仍出现 | U-Boot proper 也照样读 SPI |
 
-结论：**SPI 在 boot ROM 里排第一，只要它能被读到就赢**，没有硬件手段绕过。
-要改 SPI 引导程序，只有 Maskrom 这一条路。
+结论：**SPI 在 boot ROM 里排第一，只要它能被读到就赢**，没有硬件手段绕过它**去改变
+引导顺序**。要改 SPI 上的引导程序，Maskrom 是唯一一条路。
+
+⭐ **但注意这条结论的范围**：它说的是"引导顺序绕过不了 SPI"，**不是**"进 maskrom
+必须先短接 SPI"。2026-10-10 实测按住板上按键、不短接 SPI 也能进 maskrom，而且串口
+**同时**有从 SPI 来的 TPL/SPL —— 两件事一起发生，机制未测。详见
+[硬件按键一节](hardware.md#板载按键maskromresetrecovery)。
 
 ### 进了系统之后不要试图修 SPI
 

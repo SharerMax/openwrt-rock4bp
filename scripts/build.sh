@@ -9,13 +9,23 @@
 # twice shipped an image that built with exit code 0 and was missing something
 # essential, and both times the only way to notice was to look at the output
 # rather than at the exit status.
-cd /home/max/Code/openwrt || exit 99
-
 # Helper scripts live beside this one, not in the OpenWrt tree the checks run
 # against. Resolving them from $0 keeps the two apart -- a relative path here
 # fails only when the check runs, and prints a bare "No such file" that looks
 # like a missing helper rather than a wrong directory.
+#
+# Resolved BEFORE the cd below, and that ordering is load-bearing. $0 is only
+# absolute when the caller passed an absolute path, so `cd "$(dirname "$0")"`
+# after `cd /home/max/Code/openwrt` resolves a relative "scripts/build.sh"
+# against the OpenWrt tree and SCRIPT_DIR becomes .../openwrt/scripts -- a
+# directory that does not exist. Observed 2026-10-10: four assertions reported
+# FAILED with "can't open file .../openwrt/scripts/assert-*.py", on a build
+# whose artefacts passed all four once the real path was used. The checks were
+# not wrong; they were not finding their own helpers. Nothing documented a
+# canonical invocation, so this broke for every relative-path caller.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+cd /home/max/Code/openwrt || exit 99
 umask 022
 LOG=/tmp/build-full.log
 : > "$LOG"

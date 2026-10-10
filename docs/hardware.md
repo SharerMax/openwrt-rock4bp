@@ -41,7 +41,7 @@ Radxa ROCK 4B+ 的硬件事实、板型辨识、排针、版本差异、板载�
 | WiFi/BT | **AP6256**（BCM43456 SDIO + BCM4345C5 BT），sdio0 / uart0 |
 | 音频 | ES8316 @ i2c1 `0x11`，i2s0，MCLK 来自 `SCLK_I2S_8CH_OUT` |
 | HDMI | RK3399 dw-hdmi + VOP（**本移植未启用**，见[范围](#hdmi--音频内核里根本没编译)） |
-| 按键 | **Maskrom** + Reset（无 recovery 键） |
+| 按键 | **Maskrom** + Reset + **Recovery**，三颗（2026-10-10 目视确认）。⚠️ Maskrom/Recovery 任一键 + 上电即进 maskrom，**不必短接 SPI** |
 | 调试 | UART2，**1500000 8N1**，3.3V TTL，只需 GND/TX/RX，不接 VCC |
 | 状态 LED | 蓝色，gpio3_PD5 |
 
@@ -84,36 +84,76 @@ production boards"*。串口日志里的 `SF: Detected XT25F32B ... total 4 MiB`
 
 ---
 
-## 板载按键：是 Maskrom，不是 recovery
+## 板载按键：Maskrom、Reset、Recovery
 
-板上按键是 **Maskrom 按键**，功能由 **boot ROM 在上电瞬间**采样决定 —— Linux 侧不存在
-对应事件。**实测：按住按键没有任何 GPIO 电平变化。** 这与"按键由 boot ROM 采样"一致
-—— 如果它同时被 Linux 当输入用，按下就该在 debugfs 里看到变化。Radxa 和主线的 board
-文件都**没有** gpio-keys 节点，本移植的 DTS 里也刻意没有。
+板上有**三颗**按键：**Maskrom**、**Reset**、**Recovery**（2026-10-10 目视确认）。
+
+⚠️ **本文此前长期写成"只有 Maskrom + Reset，没有 recovery 键"，是错的。** 依据是旧 wiki
+恰好记了三颗、而 Radxa 当前文档只提一颗，于是当时选了"以官方文档为准"把旧记录否掉了 ——
+**两处都没看过实物，就二选一**。Recovery 键是有的。
+
+| 按键 | 谁在采样 | Linux 侧 | 进 maskrom |
+|---|---|---|---|
+| **Maskrom** | boot ROM，**上电瞬间**采样 | 无输入（实测按住无任何 GPIO 变化） | ✅ **不用短接 SPI**（已验证） |
+| **Reset** | 引导程序（复位整个 SoC） | 无输入 | ❌ 不适用 |
+| **Recovery** | boot ROM，**上电瞬间**采样 | 无输入 | ✅ **不用短接 SPI**（已验证） |
+
+Maskrom / Recovery 两颗键按住 + 上电即进 maskrom，**Linux 侧不存在对应输入**（实测按住
+没有任何 GPIO 电平变化）。Radxa 和主线的 board 文件都**没有** gpio-keys 节点，本移植的
+DTS 里也刻意没有。
 
 > 曾经猜了一个 `gpio4_B2` 的 gpio-keys 节点，实测无 GPIO 变化后已删除。
 
-旧 wiki 记的是"三个按键 maskrom / reset / recovery，同时按住 maskrom + reset 进
-maskrom"。而 Radxa **当前**文档对 4A+/4B+ 只提一个 Maskrom 按键，且操作是"按住 + 上电"。
-**以官方文档为准。**
+### ⭐ Recovery 键也能进 maskrom —— **不必再短接 SPI**
+
+⚠️ **2026-10-10 实测推翻了"进 maskrom 必须短接 SPI"这条。**
+
+| 组合 | 是否枚举出 maskrom 设备 |
+|---|---|
+| 只按 **Recovery** | ✅ **能**（未短接 SPI） |
+| 只按 **Maskrom** | ✅ **能**（未短接 SPI） |
+| Recovery + Maskrom 同时按 | ✅ 能 |
+
+⚠️ **重复多次，每次都出现** —— 不是一次侥幸。
+
+**Recovery 键之前根本没人知道它在，因为文档先把它否掉了。** 这就是本仓库反复吃亏的那类
+错误：两个书面来源不一致时选了其中一个，而不是看一眼实物。
+
+⚠️ **但机制仍然没搞清楚，而且有一条观察直接排除了最直觉的那个解释。** 那次上电**串口有
+TPL/SPL 输出** —— 也就是说 **boot ROM 照样先跑了 SPI 里的引导程序**，Recovery 键并没有让
+它跳过 SPI。所以这**不是**"recovery 脚在 SPI 之前把 ROM 拉进 USB download 模式"，
+而是这两件事**同时发生**。为什么能同时发生，**待测**。
+
+⚠️ **不要写成"Recovery 键优先级高于 SPI"。** 那是被串口输出否掉的。
+⚠️ 也**不要**写成"SPI 排第一所以 Recovery 键没用"—— 它确实枚举出了设备。
+两个观察都成立，机制在它们中间。
+
+**实际影响（这条是确定的）：进 maskrom 不再需要动排针。** 之前每次进 maskrom 都要短接
+40-pin 的 SPI CLK（23/25），现在按一下板上的 Recovery 或 Maskrom 键就行 —— 少一个可能
+短错、可能虚焊的步骤，在救砖时这是实打实的收益。⚠️ 但它**只**省掉进 maskrom 这一步，
+后面 `db` / `wl` 选错 loader 仍然会静默写到另一块介质。
 
 ### 进 Maskrom 的步骤
 
+⚠️ **2026-10-10 更新：第 ① 步不再是必需的。** 下面这版是**不用短接 SPI**的写法：
+
 ```
-① 若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND
-② 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
-③ 主板未供电前按住 Maskrom 按键
-④ 使用电源适配器给主板供电
-⑤ 主板供电后松开 Maskrom 按键
+① 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
+② 主板未供电前按住 Maskrom 或 Recovery 按键
+③ 使用电源适配器给主板供电
+④ 主板供电后松开按键
 若主板电源绿灯常亮，说明成功进入 Maskrom 模式。
 ```
 
-第 ① 步对这块板**必需** —— 本板贴了 SPI Flash，不短接的话 SPI 里的 U-Boot 会先接管。
 成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记为 `2207:330c`），
 用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
 
-✅ **Maskrom 已在真机验证可用**（2026-10-06）：用官方 `rk3399_loader` 加 Armbian 的引导
-程序，把起不来的板子救回了。
+⚠️ **Radxa 官方文档里第 ① 步（"若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND"）
+仍在**，那是官方五步流程，本仓库 2026-10-06 用它救回过板子。**官方流程保留备用**，
+但**本板实测不需要**，按板上的键即可。
+
+✅ **两条进 maskrom 的路径都在真机验证过**（2026-10-06 官方五步流程；2026-10-10 按键直进，
+重复多次）。
 
 ⚠️ **别把"短接 SPI"读成"绕过 SPI 的手段"。** 实测短接**不会**让 boot ROM 跳过 SPI：
 
@@ -123,8 +163,11 @@ maskrom"。而 Radxa **当前**文档对 4A+/4B+ 只提一个 Maskrom 按键，�
 | 串口第一行仍是 `U-Boot TPL 2022.07_armbian` | **boot ROM 照样从 SPI 加载引导程序** |
 | `Loading Environment from SPIFlash` 仍出现 | U-Boot proper 也照样读 SPI |
 
-**SPI 在 boot ROM 里排第一，只要它能被读到就赢。** 短接只对进 maskrom 有用 —— 那正是
-Radxa 写它的用途。
+**SPI 在 boot ROM 里排第一，只要它能被读到就赢。**
+
+⚠️ **2026-10-10：这个"排第一"仍然成立，且按键实测反过来印证了它。** 按 Recovery 键那次
+**串口同样有 TPL/SPL 输出** —— 也就是说**两条进 maskrom 的路都不是靠"跳过 SPI"**。
+⚠️ 那为什么按了键还能枚举出 maskrom 设备，**未测**。别把这两件事合成"按键优先级高于 SPI"。
 
 ---
 

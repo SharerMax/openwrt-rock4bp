@@ -38,6 +38,31 @@ RK3399 的 boot ROM 按 **SPI → eMMC → SD** 找引导程序。
 - ❌ **卡上放一份好的引导程序** —— SPI 成功就不再看卡上那份
 - ✅ 只有 **Maskrom** 能改 SPI 上的引导程序（已验证）
 
+### ⚠️ 2026-10-10：按板上的键能进 maskrom，**不必短接 SPI**
+
+⚠️ **本文长期把"短接 SPI 引脚"写成进 maskrom 的必需步骤，那条不再成立。**
+
+实测（重复多次，每次都成功）：
+
+| 组合 | 是否枚举出 maskrom 设备 |
+|---|---|
+| 只按 **Recovery** 键，**不短接 SPI** | ✅ **能** |
+| 只按 **Maskrom** 键，**不短接 SPI** | ✅ **能** |
+| Recovery + Maskrom 同时按 | ✅ 能 |
+
+⚠️ **Recovery 键是本仓库先否掉、2026-10-10 才发现存在的。** 此前文档写"板上只有 Maskrom
++ Reset，没有 recovery 键"，依据是两个书面来源互相矛盾时选了官方那个，**没人看实物**。
+
+**但"按键优先级高于 SPI"这个解释是错的，不要写。** 那次上电**串口同时有 TPL/SPL 输出**
+—— **boot ROM 照样先从 SPI 加载了引导程序**，按键之后照样枚举出了设备。**两件事同时
+发生，机制未测。** ⚠️ 上面的"只要 SPI 上有可读的引导程序，它就赢"**依然成立**，
+按键不是靠推翻它起作用的。
+
+**实际影响：进 maskrom 少一个要短接 40-pin SPI CLK（23/25）的步骤** —— 少一个可能短错、
+可能虚焊的环节，救砖时是实打实的收益。**它只影响"怎么进 maskrom"这一步**，
+不改变 SPI→eMMC→SD 的引导顺序，也不改变 `wl` 选错 loader 会静默写到另一块介质这件事。
+按键与板级事实见 [hardware.md](hardware.md#板载按键maskromresetrecovery)。
+
 ---
 
 ## 镜像自带引导程序
@@ -572,7 +597,9 @@ scripts/flash-spi.sh --plan                     # 再打印将要执行的命令
 scripts/flash-spi.sh --write --loader <spinor-loader>   # 真写，要手输 YES
 ```
 
-进 Maskrom 仍然要先短接 SPI CLK（40-pin 23/25），理由不变：SPI 排第一。
+⚠️ **进 maskrom 不再需要短接 SPI CLK（40-pin 23/25）** —— 2026-10-10 实测按住板上的
+Maskrom 或 Recovery 键即可，重复多次。Radxa 官方文档里短接那一步仍在，作为备用保留。
+详见本文开头「2026-10-10：按板上的键能进 maskrom」那一节。
 
 ---
 

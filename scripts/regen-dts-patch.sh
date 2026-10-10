@@ -20,6 +20,12 @@ echo "cpp errors: $(wc -l < /tmp/cpp.err)"
 
 ./scripts/dtc/dtc -I dtb -O dts /tmp/v5.dtb 2>/dev/null > /tmp/rt5.dts
 printf 'gpio-keys nodes : %s (expect 0)\n' "$(grep -c gpio-keys /tmp/rt5.dts || true)"
+# This greps the DECOMPILED dtb, so comments in the DTS source cannot reach it --
+# which matters now that the source's gpio-keys comment mentions "Recovery". The
+# check stays 0 because no node is labelled Recovery, which is the real claim:
+# the board has a Recovery button (confirmed by eye 2026-10-10) and it is
+# deliberately NOT described in the device tree, because its function has never
+# been tested. Adding a label here would be a claim this repo cannot support yet.
 printf 'Recovery label  : %s (expect 0)\n' "$(grep -c Recovery /tmp/rt5.dts || true)"
 printf 'sdio0           : %s\n' "$(grep -A30 'mmc@fe310000 {' /tmp/rt5.dts | grep -m1 status | tr -d '\t')"
 printf 'uart0           : %s\n' "$(grep -A30 'serial@ff180000 {' /tmp/rt5.dts | grep -m1 status | tr -d '\t')"

@@ -373,6 +373,20 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
 
 - Boot order is **SPI → eMMC → SD**. A working SPI bootloader always wins, so a masking
   trick cannot force the use of an image-embedded bootloader.
+- ⭐ **The board has three buttons — Maskrom, Reset, Recovery — and pressing Maskrom or
+  Recovery at power-on enters maskrom WITHOUT shorting the SPI pins.** Measured 2026-10-10,
+  repeatedly, all combinations. This killed a rule the repo had carried for months
+  ("reaching maskrom requires shorting SPI CLK, 40-pin 23/25"). **The Recovery key had been
+  written out of existence first**, by choosing Radxa's one-button doc over an old wiki's
+  three-button account without anyone looking at the board — two written sources disagreed
+  and the tie was broken on paper, not on the hardware. Linux sees no key events, so the DTS
+  still has no gpio-keys node; that part is measured (holding a key moves no GPIO).
+  ⚠️ **The mechanism is NOT understood and the intuitive explanation is wrong**: the serial
+  console shows TPL/SPL from SPI *at the same time* as maskrom enumerates. So do not write
+  "the key outranks SPI" — the serial log contradicts it — and do not write "SPI runs first
+  so the key does nothing", which the enumeration contradicts. Both happen; why is open.
+  Radxa's official five-step procedure still works and is kept as the documented fallback.
+  See `docs/hardware.md` and `docs/boot-order.md`.
 - The image **does** embed its own bootloader. Earlier docs said otherwise.
 - A bootloader needs **two files**: `idbloader*.img` is TPL+SPL only; U-Boot proper is
   a separate `u-boot.itb`.

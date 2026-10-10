@@ -32,11 +32,17 @@
 #   - 4 MB SPI flash IS populated. U-Boot lives there.
 #   - So `dd` to SD/USB/eMMC never touches the boot chain. If the result will not
 #     boot, the SPI U-Boot is still intact and a USB stick still recovers it.
-#   - The consequence runs the other way too: SPI takes over before anything else,
-#     so reaching Maskrom REQUIRES shorting the SPI flash pins to GND first.
-#   - There is a Maskrom button, not a recovery button. The boot ROM samples it at
-#     power-on, so Linux never sees an event and the DTS deliberately has no
-#     gpio-keys node.
+#   - SPI is still tried before eMMC and SD, so a half-written SPI bootloader
+#     intercepts the board before anything on the removable media runs.
+#   - Three buttons: Maskrom, Reset, Recovery. All three are sampled at power-on
+#     (or by the bootloader), so Linux never sees an event and the DTS
+#     deliberately has no gpio-keys node.
+#   - MEASURED 2026-10-10, repeatedly: holding Maskrom OR Recovery while
+#     powering on enumerates maskrom WITHOUT shorting the SPI pins. The old
+#     "you must short SPI first" rule is dead. Radxa's official five-step
+#     procedure, including the shorting, still works and is kept as a fallback.
+#     This is NOT because the key outranks SPI -- the serial log shows TPL/SPL
+#     off SPI at the same time. Do not "explain" it that way.
 #   - eMMC is soldered, 32 GB on this board. It already contains one bare partition
 #     of unknown content; writing over it is not reversible.
 #
@@ -354,7 +360,10 @@ IF THE BOARD WILL NOT BOOT
 
   Plug the working USB stick back in. U-Boot's boot chain falls through to usb,
   which the tty4/tty5 logs showed working twice.
-  Last resort is Maskrom, which on THIS board needs the SPI flash pins shorted to
-  GND first, because SPI's U-Boot takes over before Maskrom would otherwise be
-  reachable. Full procedure in docs/flashing.md section 7.
+  Last resort is Maskrom. Hold the on-board Maskrom or Recovery key while
+  powering on -- measured 2026-10-10, repeatedly, and it does NOT require
+  shorting the SPI pins the way Radxa's official step 1 says. (That step still
+  works and is the documented fallback.) Note this does not touch the separate
+  trap: the wrong loader makes `wl` report success while writing another medium.
+  Full procedure in docs/flashing.md section 7.
 EOF
