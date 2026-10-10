@@ -458,9 +458,10 @@ TPL/SPL 自己的输出拿到手，`md` 直接读了 PWM2 的寄存器。② 没
 - [x] Phase 5c：WiFi **固件运行** —— 根因是 pwrseq 时钟名（`lpo` → `ext_clock`），已修
 - [x] Phase 5d：Maskrom 按键定性，猜的 gpio-keys 已删
       ⚠️ **当时连带否掉了 recovery 键，否错了** —— 板上确实有三颗（10-10 目视更正）；
-      随后实测 **Recovery / Maskrom 任一键 + 上电即进 maskrom，不必短接 SPI**
-      （重复多次；机制未测，串口同时有 SPI 的 TPL/SPL）。见
-      [docs/hardware.md](docs/hardware.md#板载按键maskromresetrecovery)
+      实测 **Recovery / Maskrom 任一键 + 上电即进 maskrom，不必短接 SPI**（重复多次）。
+      ⚠️ **10-11 测出机制：是 U-Boot proper 发现按键后自己复位进 maskrom，不是 ROM**，
+      所以**引导程序坏了时按键这条路未测** —— 短接 SPI 那步必须留作兜底，两条路不等价。
+      见 [docs/hardware.md](docs/hardware.md#板载按键maskromresetrecovery)
 - [x] Phase 5h：查明镜像**自带**引导程序（LBA 0x40 + 0x4000），并加断言盯住
       —— 后又从板上的 SD 卡实测确认了这两个 magic 真的在盘上
 - [x] Phase 5i：给内核补上 `&spi1` + `flash@0`，让 SPI 闪存在 OpenWrt 下可见

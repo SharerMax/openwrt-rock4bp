@@ -375,18 +375,27 @@ it varies per boot, so **assert the band, never the exact number.** My first ban
   trick cannot force the use of an image-embedded bootloader.
 - ⭐ **The board has three buttons — Maskrom, Reset, Recovery — and pressing Maskrom or
   Recovery at power-on enters maskrom WITHOUT shorting the SPI pins.** Measured 2026-10-10,
-  repeatedly, all combinations. This killed a rule the repo had carried for months
-  ("reaching maskrom requires shorting SPI CLK, 40-pin 23/25"). **The Recovery key had been
-  written out of existence first**, by choosing Radxa's one-button doc over an old wiki's
-  three-button account without anyone looking at the board — two written sources disagreed
-  and the tie was broken on paper, not on the hardware. Linux sees no key events, so the DTS
-  still has no gpio-keys node; that part is measured (holding a key moves no GPIO).
-  ⚠️ **The mechanism is NOT understood and the intuitive explanation is wrong**: the serial
-  console shows TPL/SPL from SPI *at the same time* as maskrom enumerates. So do not write
-  "the key outranks SPI" — the serial log contradicts it — and do not write "SPI runs first
-  so the key does nothing", which the enumeration contradicts. Both happen; why is open.
-  Radxa's official five-step procedure still works and is kept as the documented fallback.
-  See `docs/hardware.md` and `docs/boot-order.md`.
+  repeatedly, all combinations. **The Recovery key had been written out of existence
+  first**, by choosing Radxa's one-button doc over an old wiki's three-button account
+  without anyone looking at the board — two written sources disagreed and the tie was
+  broken on paper, not on the hardware. Linux sees no key events, so the DTS still has no
+  gpio-keys node; that part is measured (holding a key moves no GPIO).
+  ⚠️ **MECHANISM, measured 2026-10-11 (`log/tty19.txt`): it is U-Boot PROPER that sees the
+  key**, not the boot ROM — `download key pressed, entering download mode...resetting ...`
+  appears after the full U-Boot banner and environment load, then `Boot1 Release Time` and
+  `UsbBoot` from the ROM. So **the key does NOT participate in the ROM's choice of medium**
+  (neither "key outranks SPI" nor "SPI runs first so the key is useless" is right), and
+  ⚠️ **the key route needs a working U-Boot proper while shorting the SPI pins does not**
+  — the ROM does that one itself. **The two routes are NOT equivalent: if the bootloader is
+  broken the key route is UNTESTED, so keep the shorting step as the fallback.** That line
+  buys not needing a working bootloader, and dropping it because the key is easier is how a
+  bricked board becomes unfixable. See `docs/hardware.md` and `docs/boot-order.md`.
+- ⚠️ **`Trying to boot from BOOTROM` / `Returning to boot ROM...` are on the successful path
+  and prove nothing about SPI.** They appear in `log/tty19.txt` at lines 9-10 and 126-127,
+  same position both times, on a boot that reaches Linux and mounts root with zero panics.
+  `docs/boot-order.md` used them to conclude SPI holds nothing bootable; that inference does
+  not hold. ⚠️ Whether SPI currently holds anything bootable is **still untested** — do not
+  re-record "SPI is empty" as established.
 - The image **does** embed its own bootloader. Earlier docs said otherwise.
 - A bootloader needs **two files**: `idbloader*.img` is TPL+SPL only; U-Boot proper is
   a separate `u-boot.itb`.

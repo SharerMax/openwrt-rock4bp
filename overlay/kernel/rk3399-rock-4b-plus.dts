@@ -70,10 +70,17 @@
 	 * button while applying power, and the ROM enters maskrom. There is no
 	 * Linux-visible event to describe.
 	 *
-	 * Note what this does NOT say: it does not say the ROM skips the SPI
-	 * flash. Measured 2026-10-10, maskrom enumerates on the USB host while the
-	 * serial console simultaneously shows the TPL/SPL that came off SPI. Both
-	 * happen; why is unknown.
+	 * Note what this does NOT say: it does not say the ROM samples the key at
+	 * power-on. Measured 2026-10-11 (log/tty19.txt): the ROM boots the board
+	 * normally all the way to U-Boot proper, and *U-Boot proper* finds the key
+	 * and resets into maskrom itself --
+	 *
+	 *   download key pressed, entering download mode...resetting ...
+	 *
+	 * Shorting the SPI pins instead is done by the ROM and needs no bootloader,
+	 * so the two routes are not equivalent. Which one rescues a board whose
+	 * bootloader does not run is untested, and this file must not be the reason
+	 * anyone assumes it was tested.
 	 *
 	 * Leaving the node in would also permanently claim gpio4_B2, which the
 	 * 40-pin header and expansion HATs may want.
@@ -84,13 +91,12 @@
 	 * say the board had only Maskrom and Reset, which was wrong; it was decided
 	 * from two written sources and nobody looked at the board. Measured
 	 * 2026-10-10: either Maskrom or Recovery, held at power-on, puts the board
-	 * into maskrom -- repeatedly, without shorting the SPI pins. Why that works
-	 * while the boot ROM still loads TPL from SPI first is NOT understood, and
-	 * "the key outranks SPI" is contradicted by the serial log, so nothing here
-	 * describes the key electrically. The no-gpio-keys decision still stands on
-	 * what was actually measured -- holding a key moves no GPIO -- and if that
-	 * ever stops being true, this comment is what has to change, along with the
-	 * pin.
+	 * into maskrom -- repeatedly, without shorting the SPI pins. Measured
+	 * 2026-10-11: that is U-Boot proper responding to the key, not the boot ROM
+	 * reacting to it, so unlike shorting the SPI pins it does depend on a
+	 * working U-Boot proper. The no-gpio-keys decision still stands on what was
+	 * actually measured -- holding a key moves no GPIO -- and if that ever stops
+	 * being true, this comment is what has to change, along with the pin.
 	 */
 };
 

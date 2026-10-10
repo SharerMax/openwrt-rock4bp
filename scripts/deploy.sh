@@ -37,12 +37,16 @@
 #   - Three buttons: Maskrom, Reset, Recovery. All three are sampled at power-on
 #     (or by the bootloader), so Linux never sees an event and the DTS
 #     deliberately has no gpio-keys node.
-#   - MEASURED 2026-10-10, repeatedly: holding Maskrom OR Recovery while
-#     powering on enumerates maskrom WITHOUT shorting the SPI pins. The old
-#     "you must short SPI first" rule is dead. Radxa's official five-step
-#     procedure, including the shorting, still works and is kept as a fallback.
-#     This is NOT because the key outranks SPI -- the serial log shows TPL/SPL
-#     off SPI at the same time. Do not "explain" it that way.
+#   - MEASURED 2026-10-10/11, repeatedly: holding Maskrom OR Recovery while
+#     powering on enumerates maskrom WITHOUT shorting the SPI pins.
+#     MECHANISM, also measured (log/tty19.txt): it is U-Boot PROPER that detects
+#     the key and resets into it --
+#       download key pressed, entering download mode...resetting ...
+#     -- so this route needs a working U-Boot proper. Shorting the SPI pins is
+#     done by the boot ROM itself and needs no bootloader at all.
+#     THE TWO ARE NOT EQUIVALENT. If the bootloader is broken, the key route is
+#     UNTESTED, so the shorting step stays the fallback. Do not drop it, and do
+#     not "simplify" the key route into sounding ROM-driven.
 #   - eMMC is soldered, 32 GB on this board. It already contains one bare partition
 #     of unknown content; writing over it is not reversible.
 #
@@ -360,10 +364,18 @@ IF THE BOARD WILL NOT BOOT
 
   Plug the working USB stick back in. U-Boot's boot chain falls through to usb,
   which the tty4/tty5 logs showed working twice.
-  Last resort is Maskrom. Hold the on-board Maskrom or Recovery key while
-  powering on -- measured 2026-10-10, repeatedly, and it does NOT require
-  shorting the SPI pins the way Radxa's official step 1 says. (That step still
-  works and is the documented fallback.) Note this does not touch the separate
-  trap: the wrong loader makes `wl` report success while writing another medium.
-  Full procedure in docs/flashing.md section 7.
+  Last resort is Maskrom. Two routes, NOT equivalent -- read this before
+  choosing one.
+
+  If the bootloader itself still runs: hold the on-board Maskrom or Recovery key
+  while powering on. Measured 2026-10-10/11, repeatedly. No pin shorting needed.
+
+  If the bootloader does NOT run: that route is UNTESTED, because it is U-Boot
+  proper that spots the key ("download key pressed, entering download mode") and
+  resets into maskrom. Short the SPI CLK pin (40-pin 23) to GND (25) and use
+  Radxa's official five-step procedure instead -- the ROM does that one itself,
+  with no bootloader involved. Verified 2026-10-06 on a board that would not boot.
+
+  Either way: the wrong loader makes `wl` report success while writing another
+  medium. Full procedure in docs/flashing.md section 7.
 EOF

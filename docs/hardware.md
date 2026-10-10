@@ -41,7 +41,7 @@ Radxa ROCK 4B+ 的硬件事实、板型辨识、排针、版本差异、板载�
 | WiFi/BT | **AP6256**（BCM43456 SDIO + BCM4345C5 BT），sdio0 / uart0 |
 | 音频 | ES8316 @ i2c1 `0x11`，i2s0，MCLK 来自 `SCLK_I2S_8CH_OUT` |
 | HDMI | RK3399 dw-hdmi + VOP（**本移植未启用**，见[范围](#hdmi--音频内核里根本没编译)） |
-| 按键 | **Maskrom** + Reset + **Recovery**，三颗（2026-10-10 目视确认）。⚠️ Maskrom/Recovery 任一键 + 上电即进 maskrom，**不必短接 SPI** |
+| 按键 | **Maskrom** + Reset + **Recovery**，三颗（2026-10-10 目视确认）。⚠️ Maskrom/Recovery 任一键 + 上电即进 maskrom，**不必短接 SPI** —— 但由 **U-Boot proper** 而非 ROM 触发 |
 | 调试 | UART2，**1500000 8N1**，3.3V TTL，只需 GND/TX/RX，不接 VCC |
 | 状态 LED | 蓝色，gpio3_PD5 |
 
@@ -119,23 +119,53 @@ DTS 里也刻意没有。
 **Recovery 键之前根本没人知道它在，因为文档先把它否掉了。** 这就是本仓库反复吃亏的那类
 错误：两个书面来源不一致时选了其中一个，而不是看一眼实物。
 
-⚠️ **但机制仍然没搞清楚，而且有一条观察直接排除了最直觉的那个解释。** 那次上电**串口有
-TPL/SPL 输出** —— 也就是说 **boot ROM 照样先跑了 SPI 里的引导程序**，Recovery 键并没有让
-它跳过 SPI。所以这**不是**"recovery 脚在 SPI 之前把 ROM 拉进 USB download 模式"，
-而是这两件事**同时发生**。为什么能同时发生，**待测**。
+### 机制：是 **U-Boot proper** 进的 maskrom，不是 boot ROM
 
-⚠️ **不要写成"Recovery 键优先级高于 SPI"。** 那是被串口输出否掉的。
-⚠️ 也**不要**写成"SPI 排第一所以 Recovery 键没用"—— 它确实枚举出了设备。
-两个观察都成立，机制在它们中间。
+⚠️ **2026-10-11 `log/tty19.txt` 把机制测出来了，而且和当时的推测相反。**
 
-**实际影响（这条是确定的）：进 maskrom 不再需要动排针。** 之前每次进 maskrom 都要短接
-40-pin 的 SPI CLK（23/25），现在按一下板上的 Recovery 或 Maskrom 键就行 —— 少一个可能
-短错、可能虚焊的步骤，在救砖时这是实打实的收益。⚠️ 但它**只**省掉进 maskrom 这一步，
-后面 `db` / `wl` 选错 loader 仍然会静默写到另一块介质。
+```
+ 40: Model: Radxa ROCK 4B+                        <- U-Boot proper 已经完整跑起来
+ 41: download key pressed, entering download mode...resetting ...
+ 42: DDR Version 1.27 20211018                    <- boot ROM 重新从零初始化 DRAM
+ 44: soft reset
+109: Boot1 Release Time: Jun  2 2020 15:02:17, version: 1.26   <- ROM 自己的标识
+115: UsbBoot ...74128                            <- ROM 的 USB download 路径
+```
+
+**因果顺序是：ROM → TPL → SPL → U-Boot proper → U-Boot proper 发现按键 → 复位 → ROM 的
+USB download 路径。** 那行 `download key pressed` 出现在 `Model:` 和 `Loading Environment
+from MMC` **之后**，所以它出自 **U-Boot proper**，不是 ROM、也不是 SPL。
+
+⚠️ **因此"ROM 在上电时采样 recovery 脚、抢在 SPI 之前进 USB download"这个解释是错的**，
+而且是被这份日志否掉的 —— ROM 要是真在采样，U-Boot proper 就不会先跑起来。
+`UsbBoot` 那行来自 ROM，但它是**被 U-Boot proper 用一次 soft reset 请过来的**。
+
+**这条在 24 份抓取里只出现在 `tty19`，只出现一次**（`download key` 全库检索），其余 23 份
+一次都没有。所以它确实由这次按键引起，不是每次开机都打。
+
+**一次干净的对照也在同一份日志里**：第 118 行起是第二次启动（按 TPL 横幅切分 = 2 次启动，
+不能数 panic 行数），`Reset cause: unknown reset`（就是上面那次 soft reset），这一轮**没有**
+按键行，正常 autoboot 进了 Linux，`mmcblk0p2` 挂上 root。**整份零 panic。**
+
+### ⚠️ 两条路**不等价** —— 这条比机制本身更要紧
+
+| | 按键（Recovery / Maskrom） | 短接 SPI CLK 引脚 |
+|---|---|---|
+| 谁进 maskrom | **U-Boot proper 复位后**，ROM 才进 | **ROM 自己**直接进 |
+| 需要引导程序能跑吗 | ⚠️ **需要** | 不需要 |
+| 本板实测 | ✅ | ✅（2026-10-06 救过砖） |
+
+⚠️ **按键这条路要先有一个能跑起来的 U-Boot proper。** 这正是救砖场景里最不成立的前提 ——
+**引导程序坏掉时按键能不能救回来，没有测过，不要假定能。**
+
+**短接引脚那一步因此必须保留为兜底，它不是"多余的旧做法"。** 之前把它写成"可以省掉的、
+可能短错的步骤"是错的：那一步买到的是**不依赖引导程序**。
+
+（按键仍然更方便，值得作为首选；但**兜底顺序不能因为按键好用就丢掉短接**。）
 
 ### 进 Maskrom 的步骤
 
-⚠️ **2026-10-10 更新：第 ① 步不再是必需的。** 下面这版是**不用短接 SPI**的写法：
+**首选：按住板上的键（2026-10-10 实测，重复多次）**
 
 ```
 ① 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
@@ -148,12 +178,27 @@ TPL/SPL 输出** —— 也就是说 **boot ROM 照样先跑了 SPI 里的引导
 成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记为 `2207:330c`），
 用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
 
-⚠️ **Radxa 官方文档里第 ① 步（"若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND"）
-仍在**，那是官方五步流程，本仓库 2026-10-06 用它救回过板子。**官方流程保留备用**，
-但**本板实测不需要**，按板上的键即可。
+⚠️ **前提：这条路要有一个能跑起来的 U-Boot proper**（见上面「两条路不等价」）。
+引导程序跑不起来时它**能不能救回来，没测过**。
 
-✅ **两条进 maskrom 的路径都在真机验证过**（2026-10-06 官方五步流程；2026-10-10 按键直进，
-重复多次）。
+**兜底：Radxa 官方五步流程（2026-10-06 真机救回过一块起不来的板子）**
+
+```
+① 若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND
+② 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
+③ 主板未供电前按住 Maskrom 按键
+④ 使用电源适配器给主板供电
+⑤ 主板供电后松开 Maskrom 按键
+```
+
+⚠️ **第 ① 步不是多余的，它买的是"不依赖引导程序"。** 由 ROM 直接进 maskrom，所以
+**引导程序坏掉时只有这条路已知可用**。⚠️ 官方流程只写了按 Maskrom 键；**Recovery 键 +
+短接的组合没有测过**，不确定是否等价。
+
+⚠️ 后面 `db` / `wl` **选错 loader** 仍然会静默写到另一块介质 —— 两条路都一样，这是另一个坑。
+
+✅ **两条进 maskrom 的路径都在真机验证过**（2026-10-06 官方五步含短接，救回过砖；
+2026-10-10/11 按键直进，重复多次，`log/tty19.txt` 有完整串口记录）。
 
 ⚠️ **别把"短接 SPI"读成"绕过 SPI 的手段"。** 实测短接**不会**让 boot ROM 跳过 SPI：
 
@@ -165,9 +210,19 @@ TPL/SPL 输出** —— 也就是说 **boot ROM 照样先跑了 SPI 里的引导
 
 **SPI 在 boot ROM 里排第一，只要它能被读到就赢。**
 
-⚠️ **2026-10-10：这个"排第一"仍然成立，且按键实测反过来印证了它。** 按 Recovery 键那次
-**串口同样有 TPL/SPL 输出** —— 也就是说**两条进 maskrom 的路都不是靠"跳过 SPI"**。
-⚠️ 那为什么按了键还能枚举出 maskrom 设备，**未测**。别把这两件事合成"按键优先级高于 SPI"。
+⚠️ **2026-10-11：为什么按了键还能枚举出 maskrom，已经测出来了 —— 但答案和"SPI 排第一"
+的关系比想象的绕。** 按键那条路**根本不是 ROM 在上电时选的**：ROM 正常把引导程序跑起来，
+**U-Boot proper 自己发现按键、自己复位**，ROM 才在复位后进 USB download 路径
+（`download key pressed` → `UsbBoot`，见上面「机制」一节和 `log/tty19.txt`）。
+
+所以"按键优先级高于 SPI"和"SPI 排第一所以按键没用"**两个说法都不对**：按键根本没有参与
+ROM 的介质选择，它作用在 U-Boot proper 这一层。
+
+⚠️ **而这份日志反过来削弱了一条老推论。** `Trying to boot from BOOTROM` /
+`Returning to boot ROM...` 这两行**在这次完全成功的启动里也出现了**，位置一模一样
+（第 9–10 行和第 126–127 行，后面都跟着 SPL 并一路进到 Linux）。⚠️ **它们出现在正常
+成功路径上，所以不能拿来证明"SPI 上没有可引导镜像"。** 见 [boot-order.md](boot-order.md)。
+⚠️ SPI 上现在究竟有没有可引导镜像，**这份日志没有回答**，仍然是未测。
 
 ---
 

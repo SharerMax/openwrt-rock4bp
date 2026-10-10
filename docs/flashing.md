@@ -512,12 +512,12 @@ cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
 
 **这是唯一能改写 SPI 上引导程序的路径。** 板子起不来、microSD 也救不回来时的最后手段。
 
-板载按键是 **Maskrom / Reset / Recovery 三颗**（2026-10-10 目视确认），前两颗由 **boot ROM
-在上电瞬间**采样决定 —— Linux 侧看不到任何事件。按键的硬件事实与板型辨识见
+板载按键是 **Maskrom / Reset / Recovery 三颗**（2026-10-10 目视确认）—— **Linux 侧看不到
+任何事件**，所以 DTS 里没有 gpio-keys 节点。按键的硬件事实与板型辨识见
 [hardware.md](hardware.md#板载按键maskromresetrecovery)。
 
-⭐ **2026-10-10 实测：进 maskrom 不用再短接 SPI 了。** 按板上的 **Maskrom 或 Recovery 键**
-即可，**重复多次每次都成功**：
+⭐ **2026-10-10/11 实测：按住板上的 Maskrom 或 Recovery 键就能进 maskrom，不用短接 SPI。**
+重复多次每次都成功，`log/tty19.txt` 有完整串口记录：
 
 ```
 ① 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
@@ -530,15 +530,36 @@ cat /proc/partitions | grep -E 'mmcblk0|sda' # 应当只有 mmcblk0，没有 sda
 成功后 PC 上会枚举出 Rockchip 的 maskrom USB 设备（旧 wiki 记录为 `2207:330c`），
 用 `rkdeveloptool` 或官方 `rk3399_loader` 刷写。
 
-⚠️ **Radxa 官方五步流程（含"将 SPI Flash 对应引脚接 GND"）仍然保留备用** —— 那是本仓库
-2026-10-06 实际救回板子用的流程。**本板实测按键直进就够了**，官方那步可以省。
-⚠️ 省掉它省的是"可能短错、可能虚焊"，**不是**省掉后续选 loader 的坑：下面那条
-"用错 loader 静默写到另一块介质"照样存在。
+### ⚠️⚠️ 如果板子是**引导程序坏了**，用下面这条，不是上面那条
 
-⚠️ **为什么按了键还能进 maskrom，机制未测。** 那次上电**串口有 TPL/SPL 输出** —— boot ROM
-**照样先跑了 SPI**，所以这**不是**"按键优先级高于 SPI"，两个观察同时成立而原因未知。
-⚠️ **别写成"SPI 排第一所以按键没用"** —— 它确实枚举出了设备。详见
-[boot-order.md](boot-order.md)。
+⚠️ **2026-10-11 测出机制之后，这一点从"方便"变成了"关键"。** 串口记录显示按键这条路是
+**U-Boot proper** 发现按键后自己复位进 maskrom 的：
+
+```
+download key pressed, entering download mode...resetting ...
+```
+
+也就是说**它要先有一个能跑起来的 U-Boot proper**。⚠️ **引导程序跑不起来时按键能不能救回来，
+没有测过。** 而那正是需要救砖流程的场景 —— ⚠️ **不要因为按键更方便就把它当唯一入口。**
+
+**引导程序坏掉时唯一已知可用的是 Radxa 官方五步流程（短接那步不能省）：**
+
+```
+① 若主板有 SPI Flash，需将 SPI Flash 对应引脚接 GND
+② 使用 USB Type-A 转 USB Type-A 数据线连接主板和电脑
+③ 主板未供电前按住 Maskrom 按键
+④ 使用电源适配器给主板供电
+⑤ 主板供电后松开 Maskrom 按键
+```
+
+第 ① 步买的是**由 ROM 直接进 maskrom，不依赖引导程序**。⚠️ 官方流程只写了按 Maskrom 键，
+**Recovery 键 + 短接的组合没有测过**。
+
+⚠️ 选错 loader 会静默写到另一块介质 —— **两条路都一样**，这是另一个坑，见下。
+
+⚠️ **不是"SPI 排第一所以按键没用"** —— 它确实枚举出了设备；也**不是**"按键优先级高于 SPI"
+—— 按键根本没参与 ROM 的介质选择。机制见
+[boot-order.md](boot-order.md) 与 [hardware.md](hardware.md#板载按键maskromresetrecovery)。
 
 > ⚠️ **但别把"短接"读成"绕过 SPI 的手段"。** 实测短接**不会**让 boot ROM 跳过 SPI
 > —— 短接后 `mtd0` 消失，但串口第一行仍是 SPI 里的 TPL。**SPI 排第一、读到就赢。**
@@ -743,11 +764,18 @@ SPL 之后。
 
 ### 恢复路线 B：Maskrom 重刷 SPI
 
-见[最后一层兜底：Maskrom 模式](#最后一层兜底maskrom-模式)。⭐ **2026-10-10 更新：不需要
-短接 SPI Flash 引脚** —— 按住板上的 Maskrom 或 Recovery 键上电即可，重复多次实测。
-⚠️ Radxa 官方五步流程（含短接那步）仍然有效，留作备用。
+见[最后一层兜底：Maskrom 模式](#最后一层兜底maskrom-模式)。
 
-✅ **这条路已在真机验证过**（2026-10-06 官方五步含短接；2026-10-10 按键直进不短接）。
+⭐ **引导程序还正常时**：按住板上的 Maskrom 或 Recovery 键上电即可，**不必短接 SPI Flash
+引脚**，重复多次实测（2026-10-10/11）。
+
+⚠️⚠️ **引导程序坏了时不要只按键。** 按键这条路由 **U-Boot proper** 触发
+（`download key pressed, entering download mode...resetting ...`），它需要一个能跑起来的
+U-Boot proper；⚠️ **跑不起来时能不能救回来没测过**。**那种情况走 Radxa 官方五步流程、
+短接 SPI CLK（40-pin 23/25）** —— 那条由 ROM 直接进，不依赖引导程序。
+
+✅ **两条都在真机验证过**（2026-10-06 官方五步含短接，救回过起不来的板子；
+2026-10-10/11 按键直进不短接，`log/tty19.txt`）。
 
 ⚠️ **❌ 从 Linux 写 SPI 这条替代路径不可用 —— 已在真机验证。**
 不是"读不稳定"，是**读到的不是芯片内容**。完整证据见
@@ -767,9 +795,13 @@ SPL 之后。
 引导顺序**。要改 SPI 上的引导程序，Maskrom 是唯一一条路。
 
 ⭐ **但注意这条结论的范围**：它说的是"引导顺序绕过不了 SPI"，**不是**"进 maskrom
-必须先短接 SPI"。2026-10-10 实测按住板上按键、不短接 SPI 也能进 maskrom，而且串口
-**同时**有从 SPI 来的 TPL/SPL —— 两件事一起发生，机制未测。详见
-[硬件按键一节](hardware.md#板载按键maskromresetrecovery)。
+必须先短接 SPI"。2026-10-10 实测按住板上按键、不短接 SPI 也能进 maskrom。
+
+⚠️ **2026-10-11 测出机制后，这里也要改一句**：串口里那两件事**不是同时发生的**，
+是**有先后** —— ROM 正常把板子启动到 U-Boot proper，**U-Boot proper 自己发现按键、
+自己复位**，ROM 才在复位后进 USB download 路径。所以按键**并不参与 ROM 的介质选择**，
+而且**它依赖一个能跑起来的 U-Boot proper**；短接引脚那条由 ROM 自己做，不依赖引导
+程序。详见 [硬件按键一节](hardware.md#板载按键maskromresetrecovery)。
 
 ### 进了系统之后不要试图修 SPI
 
